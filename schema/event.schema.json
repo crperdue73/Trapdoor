@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/crperdue/trapdoor/schema/event.schema.json",
+  "title": "TRAPDOOR normalized event",
+  "description": "One shape for every honeypot event, regardless of source dialect. The point of TRAPDOOR: a student reasons about 'an event', not about Cowrie's JSON vs Snare's.",
+  "type": "object",
+  "required": ["ts", "sensor", "event", "proto"],
+  "additionalProperties": false,
+  "properties": {
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC ISO 8601 with milliseconds."
+    },
+    "sensor": {
+      "type": "string",
+      "enum": ["cowrie", "snare"],
+      "description": "Which honeypot produced this event."
+    },
+    "event": {
+      "type": "string",
+      "enum": [
+        "connect",
+        "disconnect",
+        "auth_failed",
+        "auth_success",
+        "command",
+        "upload",
+        "download",
+        "http_request"
+      ]
+    },
+    "proto": {
+      "type": "string",
+      "enum": ["ssh", "telnet", "http"]
+    },
+    "src_ip": { "type": "string" },
+    "src_port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+    "dst_port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+    "session_id": {
+      "type": "string",
+      "description": "Ties events into a single attacker transcript."
+    },
+    "username": { "type": ["string", "null"] },
+    "password": {
+      "type": ["string", "null"],
+      "description": "Captured credential attempt. Lab traffic only."
+    },
+    "command": {
+      "type": ["string", "null"],
+      "description": "Emulated-shell command, for event=command."
+    },
+    "http_method": { "type": ["string", "null"] },
+    "http_path": { "type": ["string", "null"] },
+    "http_user_agent": { "type": ["string", "null"] },
+    "payload_sha256": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Hash of any transferred artifact. The bytes are stored out of band, never inline and never executed."
+    },
+    "payload_bytes": { "type": ["integer", "null"], "minimum": 0 },
+    "scenario_id": {
+      "type": ["string", "null"],
+      "description": "Set by scripted attacks so a class session is filterable."
+    },
+    "sensor_name": {
+      "type": ["string", "null"],
+      "description": "Which instance. Lets several sensors feed one index."
+    }
+  }
+}

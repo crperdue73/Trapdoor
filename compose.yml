@@ -1,0 +1,95 @@
+name: trapdoor
+
+# TRAPDOOR core stack
+# Cowrie (ssh/telnet) + Snare (web) + shipper (normalizer)
+#
+# Safety rails are configured here, not left to the reader:
+#   - no container has a path from captured payload to execution
+#   - honeypot egress is restricted (see docs/safety.md)
+#   - ports bind to LAB_BIND_IP so the lab subnet, not the world, can reach them
+
+x-honeypot: &honeypot
+  restart: unless-stopped
+  networks:
+    - honeynet
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  cowrie:
+    <<: *honeypot
+    image: cowrie/cowrie:latest
+    container_name: trapdoor-cowrie
+    hostname: ${SENSOR_HOSTNAME:-web01}
+    environment:
+      COWRIE_TELNET_ENABLED: "true"
+      COWRIE_SHELL_ENABLED: "true"
+      # LLM mode is deliberately OFF: non-deterministic responses make
+      # a class session unreproducible, which defeats the whole point.
+      COWRIE_LLM_ENABLED: "false"
+    volumes:
+      - ./cowrie/etc/cowrie.cfg:/cowrie/cowrie-git/etc/cowrie.cfg:ro
+      - ./cowrie/etc/userdb.txt:/cowrie/cowrie-git/etc/userdb.txt:ro
+      - cowrie_var:/cowrie/cowrie-git/var
+      - ./cowrie/share:/cowrie/share:ro
+    ports:
+      - "${LAB_BIND_IP:-0.0.0.0}:${COWRIE_SSH_PORT:-2222}:2222"
+      - "${LAB_BIND_IP:-0.0.0.0}:${COWRIE_TELNET_PORT:-2223}:2223"
+    tmpfs:
+      - /tmp:size=64m
+    # No egress: a honeypot that can reach the internet is a pivot waiting
+    # to happen. Everything it needs is baked into the image.
+    networks:
+      honeynet:
+        internal: true
+
+  web:
+    <<: *honeypot
+    image: ghcr.io/mushorg/snare:latest
+    container_name: trapdoor-snare
+    hostname: ${SENSOR_HOSTNAME:-web01}
+    volumes:
+      - ./web/etc/snare:/opt/snare/etc:ro
+      - snare_var:/opt/snare/var
+    ports:
+      - "${LAB_BIND_IP:-0.0.0.0}:${SNARE_PORT:-8080}:80"
+    networks:
+      honeynet:
+        internal: true
+
+  shipper:
+    <<: *honeypot
+    build:
+      context: ./shipper
+    container_name: trapdoor-shipper
+    depends_on:
+      - cowrie
+      - web
+    environment:
+      SENSOR_NAME: ${SENSOR_NAME:-lab-sensor-01}
+      OUT_DIR: /out
+      RETENTION_DAYS: ${RETENTION_DAYS:-14}
+    volumes:
+      - cowrie_var:/in/cowrie:ro
+      - snare_var:/in/snare:ro
+      - ./out:/out
+      - ./shipper:/app:ro
+    networks:
+      honeynet:
+        internal: true
+
+networks:
+  honeynet:
+    driver: bridge
+    internal: true
+
+volumes:
+  cowrie_var:
+  snare_var:
