@@ -15,6 +15,10 @@ FAIL=0
 ok()   { printf '  \033[32mOK\033[0m    %s\n' "$1"; }
 bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAIL=1; }
 warn() { printf '  \033[33mWARN\033[0m  %s\n' "$1"; }
+# "NOT RUN" is its own severity, and it fails the run. A pipeline that goes
+# green with a check skipped is the same lie as a check reporting PASS on an
+# exception — just one layer up. (Rule from Vera, 2026-11-01.)
+skip() { printf '  \033[35mNOT RUN\033[0m  %s\n' "$1"; FAIL=1; }
 
 cd "$(dirname "$0")/.." || exit 1
 
@@ -119,7 +123,7 @@ echo
 echo "4. pipeline producing events"
 
 if [[ ! -s out/events.jsonl ]]; then
-    warn "out/events.jsonl is empty — run a scenario to generate events"
+    skip "event pipeline — out/events.jsonl is empty, nothing has proven it works"
 else
     total=$(wc -l < out/events.jsonl)
     sensors=$(jq -r '.sensor' out/events.jsonl 2>/dev/null | sort -u | tr '\n' ' ')
@@ -149,9 +153,9 @@ echo "6. honeypot egress (should be impossible)"
 if ! command -v docker >/dev/null 2>&1; then
     # A check that cannot run is not a check that passed. Saying "OK" here
     # would be the same lie as the FORWARD comment that ate its own variable.
-    warn "docker not installed — egress check NOT RUN (and not passed)"
+    skip "egress check — docker is not installed"
 elif ! docker compose ps --status running --format '{{.Service}}' 2>/dev/null | grep -qx cowrie; then
-    warn "cowrie not running — egress check NOT RUN"
+    skip "egress check — cowrie is not running"
 elif docker compose exec -T cowrie sh -c 'timeout 3 wget -q -O- http://192.168.0.1 >/dev/null 2>&1' 2>/dev/null; then
     bad "cowrie reached the LAN — internal:true is not in effect"
 else
