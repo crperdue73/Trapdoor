@@ -4,7 +4,12 @@
   "title": "TRAPDOOR normalized event",
   "description": "One shape for every honeypot event, regardless of source dialect. The point of TRAPDOOR: a student reasons about 'an event', not about Cowrie's JSON vs Snare's.",
   "type": "object",
-  "required": ["ts", "sensor", "event", "proto"],
+  "required": [
+    "ts",
+    "sensor",
+    "event",
+    "proto"
+  ],
   "additionalProperties": false,
   "properties": {
     "ts": {
@@ -14,7 +19,10 @@
     },
     "sensor": {
       "type": "string",
-      "enum": ["cowrie", "nginx"],
+      "enum": [
+        "cowrie",
+        "nginx"
+      ],
       "description": "Which honeypot produced this event."
     },
     "event": {
@@ -32,39 +40,103 @@
     },
     "proto": {
       "type": "string",
-      "enum": ["ssh", "telnet", "http"]
+      "enum": [
+        "ssh",
+        "telnet",
+        "http"
+      ]
     },
-    "src_ip": { "type": "string" },
-    "src_port": { "type": "integer", "minimum": 0, "maximum": 65535 },
-    "dst_port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+    "src_ip": {
+      "type": "string"
+    },
+    "src_port": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "dst_port": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
     "session_id": {
       "type": "string",
       "description": "Ties events into a single attacker transcript."
     },
-    "username": { "type": ["string", "null"] },
+    "username": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "password": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Captured credential attempt. Lab traffic only."
     },
     "command": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Emulated-shell command, for event=command."
     },
-    "http_method": { "type": ["string", "null"] },
-    "http_path": { "type": ["string", "null"] },
-    "http_user_agent": { "type": ["string", "null"] },
+    "http_method": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "http_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "http_status": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 100,
+      "maximum": 599,
+      "description": "HTTP response status. For a decoy this is the finding, not metadata: 403 on /.env is the lesson. Null means nginx logged no usable status."
+    },
+    "http_user_agent": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "payload_sha256": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "pattern": "^[a-f0-9]{64}$",
       "description": "Hash of any transferred artifact. The bytes are stored out of band, never inline and never executed."
     },
-    "payload_bytes": { "type": ["integer", "null"], "minimum": 0 },
+    "payload_bytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
     "scenario_id": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Set by scripted attacks so a class session is filterable."
     },
     "sensor_name": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Which instance. Lets several sensors feed one index."
     }
   }

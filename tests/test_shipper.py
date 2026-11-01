@@ -107,6 +107,37 @@ def test_nginx_http_request():
     assert ev["dst_port"] == 80
 
 
+def test_nginx_status_is_carried():
+    """The status is the finding. A decoy that logs the path and not the
+    verdict recorded the question and not the answer.
+
+    This test did not exist when the claim was written, which is exactly how
+    claim C7 was asserted from the design instead of from the output.
+    """
+    raw = {
+        "src_ip": "192.168.111.99", "src_port": 51234, "dst_port": 8080,
+        "method": "GET", "uri": "/.env", "user_agent": "curl/8.0",
+        "status": "403", "body_bytes": 0,
+        "timestamp": "2026-11-01T22:50:00Z",
+    }
+    ev = shipper.nginx_to_event(raw)
+    assert ev["http_status"] == 403, ev
+    assert isinstance(ev["http_status"], int), \
+        "must be int, not str: %r" % (ev["http_status"],)
+
+
+def test_nginx_status_missing_is_null_not_zero():
+    """An absent status is a gap, and 0 is not a status code. Reporting 0
+    would look like data to everything downstream."""
+    raw = {
+        "src_ip": "192.168.111.99", "src_port": 51234, "dst_port": 8080,
+        "method": "GET", "uri": "/", "user_agent": "curl/8.0",
+        "body_bytes": 0, "timestamp": "2026-11-01T22:50:00Z",
+    }
+    ev = shipper.nginx_to_event(raw)
+    assert ev["http_status"] is None, ev["http_status"]
+
+
 def test_nginx_session_groups_by_client():
     """Two requests from one client in the same second share a session id."""
     a = shipper.nginx_to_event({

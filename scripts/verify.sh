@@ -133,6 +133,22 @@ else
     [[ "$badlines" == "$total" ]] || bad "some lines are not valid JSON (${badlines}/${total})"
 fi
 
+# C7 as a platform check rather than only a scenario claim. This is the one
+# that fails quietly during a class: nginx serves the 403, logs it, and the
+# normalizer throws the verdict away. The lab would then teach that a scanner
+# hit /.env without ever saying what happened to it.
+if [[ -s out/events.jsonl ]]; then
+    if jq -e 'select(.sensor=="nginx")' out/events.jsonl >/dev/null 2>&1; then
+        n_total=$(jq -s '[.[] | select(.sensor=="nginx")] | length' out/events.jsonl 2>/dev/null || echo 0)
+        n_missing=$(jq -s '[.[] | select(.sensor=="nginx" and .http_status==null)] | length' out/events.jsonl 2>/dev/null || echo 0)
+        if [[ "${n_missing:-0}" -eq 0 && "${n_total:-0}" -gt 0 ]]; then
+            ok "every nginx event carries its status (${n_total} events)"
+        else
+            skip "nginx status missing on ${n_missing} of ${n_total} — the verdict is being dropped (C7)"
+        fi
+    fi
+fi
+
 # --- 5. containers ---------------------------------------------------------
 echo
 echo "5. containers"

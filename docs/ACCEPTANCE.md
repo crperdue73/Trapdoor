@@ -86,6 +86,29 @@ C8 is an honest limitation, not a feature. See `docs/limitations.md`.
 
 ## D. What is deliberately NOT claimed
 
+### The risk is rarely where the worry is pointed
+
+C7 is the worked example and it is worth keeping. My instinct said the bait
+regex in `default.conf` was the fragile part — a regex is where path-matching
+bugs live, and I could picture it matching wrong. I ran all ten paths through
+it instead of nodding at it: all ten match. The regex was fine.
+
+The actual gap was in the part I had written from the design and never read
+back from the output: the hand-built normalizer event silently omitted
+`http_status`. Nothing about the code looked wrong. It looked *incomplete* in a
+way that is invisible unless you compare the field list against the claim.
+
+Two lessons, and the second is the one that costs:
+
+1. A regex you have read is not a regex you have tested.
+2. The failure was not in the risky-looking code. It was in the code nobody
+   thought was risky, which is where it always is.
+
+This is why the list exists. Not to be right — to move the argument from
+memory to a file that can disagree with me.
+
+---
+
 Stated here so nobody reads this list as more than it is:
 
 - **Not claimed: the deployment is secure.** It is a teaching target. The host

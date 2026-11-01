@@ -173,6 +173,11 @@ def nginx_to_event(raw: dict[str, Any]) -> dict[str, Any] | None:
     ev["http_method"] = raw.get("method")
     ev["http_path"] = raw.get("uri")
     ev["http_user_agent"] = raw.get("user_agent")
+    # The status is the finding, not decoration. A decoy that logs GET /.env
+    # and not the 403 recorded the question and not the answer. Carried as an
+    # int so it sorts and ranges; None if nginx gave us nothing usable, which
+    # is a data gap worth seeing rather than a 0 worth believing.
+    ev["http_status"] = as_int(raw.get("status"))
     ev["payload_bytes"] = as_int(raw.get("body_bytes"))
     ev["scenario_id"] = raw.get("scenario_id")
 
