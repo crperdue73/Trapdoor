@@ -104,6 +104,24 @@ Two lessons, and the second is the one that costs:
 2. The failure was not in the risky-looking code. It was in the code nobody
    thought was risky, which is where it always is.
 
+### The real pattern, named by Vera
+
+Three bugs tonight, all mine, all the same shape:
+
+- a heredoc comment that ate `${LAB_BIND_IP}` out of the printed rule
+- `verify.sh` printing "SOME CHECKS FAILED" and exiting 0
+- a hand-built event dict with no declared schema to be incomplete against
+
+None of them was a coding error. Each was a thing built so that **nothing
+downstream could check it**, and each read as working because the only thing
+looking at it was the person who wrote it. A comment cannot fail to render the
+variable it consumed. A dict with no schema cannot omit a field. An always-zero
+exit cannot contradict a printed failure.
+
+The lesson is not "test more." It is: **build things that can disagree with
+you.** The acceptance list is not discipline. It is a device for being wrong
+out loud, on purpose, before a classroom finds out instead.
+
 This is why the list exists. Not to be right — to move the argument from
 memory to a file that can disagree with me.
 
