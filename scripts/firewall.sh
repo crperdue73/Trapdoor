@@ -45,7 +45,32 @@ iptables -A INPUT -p tcp --dport ${COWRIE_SSH_PORT}   -j DROP
 iptables -A INPUT -p tcp --dport ${COWRIE_TELNET_PORT} -j DROP
 iptables -A INPUT -p tcp --dport ${WEB_PORT}          -j DROP
 
-# 3. Deliberately NOT dropping FORWARD from LAB_BIND_IP.
+# 3. What LAB_CIDR=192.168.0.0/16 means, stated plainly because it is easy to
+#    misread as an allowlist.
+#
+#    It is the whole farm. Every agent host, every LXC, every management
+#    interface, the PVE nodes, the printers, whatever else lives on the /16.
+#    So "allow the lab subnet to reach the decoy ports" means: every machine
+#    on the network can reach 2222, 2223 and 8080 on this box. That is the
+#    intended teaching model — students scan it, and so can anything else here.
+#
+#    Rule 1 exists to bound the blast radius of the decoy, not to make the
+#    decoy private. The DMZ is one-way by design and does not exist here.
+#
+#    It is also nearly a no-op in practice. Rule 2 DROPs the same ports from
+#    everywhere else, and "everywhere else" on a flat /16 with on-link routing
+#    resolves to almost nothing. The rules that actually hold the line are:
+#
+#      - LAB_BIND_IP binding the published ports to one address (not 0.0.0.0)
+#      - internal: true on the honeynet, so the decoy has no route out
+#
+#    Both are verified by scripts/verify.sh. This script is the third opinion.
+#
+#    If a narrower boundary is ever wanted, the change is LAB_CIDR to the
+#    student VLAN only — a one-line change with a visible diff, which is the
+#    right shape for a security control.
+
+# 4. Deliberately NOT dropping FORWARD from LAB_BIND_IP.
 #
 #    An earlier draft had \`iptables -A FORWARD -s \${LAB_BIND_IP} -j DROP\` as
 #    a belt-and-braces backstop. Vera flagged it and she is right: Docker's
