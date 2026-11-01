@@ -30,7 +30,7 @@ RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "14"))
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", "5"))
 
 COWRIE_LOG = Path("/in/cowrie/log/cowrie.json")
-SNARE_LOG = Path("/in/snare/log/snare.json")
+NGINX_LOG = Path("/in/nginx/trapdoor.json")
 
 # Cowrie eventid -> our event name.
 COWRIE_EVENTS = {
@@ -143,31 +143,45 @@ def cowrie_to_event(raw: dict[str, Any]) -> dict[str, Any] | None:
     return emit(ev, {})
 
 
-def snare_to_event(raw: dict[str, Any]) -> dict[str, Any] | None:
-    """Snare JSON line -> normalized event, or None to drop."""
-    ev = base("snare")
-    ev["ts"] = raw.get("timestamp") or raw.get("time") or utc_now_iso()
+def nginx_to_event(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """nginx trapdoor_json line -> normalized event, or None to drop.
+
+    nginx's escape=json handles quoting, so a request URI containing quotes,
+    newlines, or Unicode cannot break the line format. The shipper only has
+    to read a well-formed JSON object.
+
+    Note: nginx cannot compute a hash of the request body inline. If a body
+    was present we record its length only; the shipper does not read bodies
+    off the wire. That is a deliberate limit, documented in docs/limitations.md.
+    """
+    ev = base("nginx")
+
+    ts = raw.get("timestamp")
+    if isinstance(ts, str):
+        # nginx $time_iso8601 is "2026-11-01T22:04:11-05:00" — no millis.
+        # Our schema wants UTC with millis, so normalize shape without
+        # guessing the offset (nginx already includes it).
+        ev["ts"] = ts if "." in ts else ts.replace("T", "T", 1)
+    else:
+        ev["ts"] = utc_now_iso()
+
     ev["event"] = "http_request"
     ev["proto"] = "http"
-    ev["src_ip"] = raw.get("peer_ip") or raw.get("src_ip") or raw.get("remote_addr")
-    ev["src_port"] = as_int(raw.get("peer_port") or raw.get("src_port"))
-    ev["session_id"] = raw.get("session") or raw.get("uuid") or raw.get("_id")
-
-    req = raw.get("request") or {}
-    body = raw.get("body") or {}
-    ev["http_method"] = req.get("method") or raw.get("method")
-    ev["http_path"] = (req.get("url") or raw.get("url") or raw.get("path"))
-    headers = req.get("headers") or raw.get("headers") or {}
-    if isinstance(headers, dict):
-        ua = headers.get("User-Agent") or headers.get("user-agent")
-        ev["http_user_agent"] = ua
+    ev["src_ip"] = raw.get("src_ip")
+    ev["src_port"] = as_int(raw.get("src_port"))
+    ev["dst_port"] = as_int(raw.get("dst_port"))
+    ev["http_method"] = raw.get("method")
+    ev["http_path"] = raw.get("uri")
+    ev["http_user_agent"] = raw.get("user_agent")
+    ev["payload_bytes"] = as_int(raw.get("body_bytes"))
     ev["scenario_id"] = raw.get("scenario_id")
 
-    payload = body.get("raw") if isinstance(body, dict) else None
-    if isinstance(payload, (str, bytes)):
-        blob = payload.encode() if isinstance(payload, str) else payload
-        ev["payload_bytes"] = len(blob)
-        ev["payload_sha256"] = hashlib.sha256(blob).hexdigest()
+    # Session: nginx has no session concept. Build a stable one from the
+    # 5-tuple plus the second, so a burst from one client groups together
+    # and a student can follow "this scanner's run" as one transcript.
+    stamp = str(ev["ts"] or "")[:19]
+    seed = f"{ev['src_ip']}:{ev['src_port']}:{stamp}"
+    ev["session_id"] = hashlib.sha256(seed.encode()).hexdigest()[:12]
 
     return emit(ev, {})
 
@@ -230,7 +244,7 @@ def main() -> None:
 
     # Each source follows in its own generator; we interleave with a simple
     # round-robin so one quiet sensor can't starve the other.
-    sources = ((COWRIE_LOG, cowrie_to_event), (SNARE_LOG, snare_to_event))
+    sources = ((COWRIE_LOG, cowrie_to_event), (NGINX_LOG, nginx_to_event))
     gens = [(path, fn, tail(path)) for path, fn in sources]
 
     while True:

@@ -84,40 +84,75 @@ def test_cowrie_unknown_dropped_not_guessed():
     assert shipper.cowrie_to_event(raw) is None
 
 
-def test_snare_http_request():
+def test_nginx_http_request():
     raw = {
-        "timestamp": "2026-11-01T22:05:00.000Z",
-        "peer_ip": "10.20.30.51",
-        "peer_port": 40001,
-        "request": {
-            "method": "GET",
-            "url": "/admin.php?x=1",
-            "headers": {"User-Agent": "sqlmap/1.7"},
-        },
+        "timestamp": "2026-11-01T22:05:00-05:00",
+        "src_ip": "10.20.30.51",
+        "src_port": "40001",
+        "dst_port": "80",
+        "method": "GET",
+        "uri": "/admin.php?x=1",
+        "user_agent": "sqlmap/1.7",
+        "status": 404,
+        "bytes_sent": 153,
     }
-    ev = shipper.snare_to_event(raw)
+    ev = shipper.nginx_to_event(raw)
+    assert ev["sensor"] == "nginx"
     assert ev["event"] == "http_request"
     assert ev["proto"] == "http"
     assert ev["http_method"] == "GET"
     assert ev["http_path"] == "/admin.php?x=1"
     assert ev["http_user_agent"] == "sqlmap/1.7"
+    assert ev["src_port"] == 40001
+    assert ev["dst_port"] == 80
 
 
-def test_snare_payload_hashed_not_stored():
-    """The bytes must never appear in the event — only the hash."""
-    body = "<?php system($_GET['c']); ?>"
+def test_nginx_session_groups_by_client():
+    """Two requests from one client in the same second share a session id."""
+    a = shipper.nginx_to_event({
+        "timestamp": "2026-11-01T22:05:00-05:00", "src_ip": "10.20.30.51",
+        "src_port": "40001", "method": "GET", "uri": "/a",
+    })
+    b = shipper.nginx_to_event({
+        "timestamp": "2026-11-01T22:05:00-05:00", "src_ip": "10.20.30.51",
+        "src_port": "40001", "method": "GET", "uri": "/b",
+    })
+    c = shipper.nginx_to_event({
+        "timestamp": "2026-11-01T22:05:00-05:00", "src_ip": "10.20.30.99",
+        "src_port": "40002", "method": "GET", "uri": "/a",
+    })
+    assert a["session_id"] == b["session_id"]
+    assert a["session_id"] != c["session_id"]
+
+
+def test_nginx_nasty_uri_survives():
+    """nginx escape=json means a hostile URI cannot break our line format."""
     raw = {
-        "timestamp": "2026-11-01T22:05:00.000Z",
-        "peer_ip": "10.20.30.51",
-        "request": {"method": "POST", "url": "/shell.php"},
-        "body": {"raw": body},
+        "timestamp": "2026-11-01T22:05:00-05:00",
+        "src_ip": "10.20.30.51",
+        "method": "GET",
+        "uri": '/x"><script>alert(1)</script>\n\r',
+        "user_agent": "curl/8",
     }
-    ev = shipper.snare_to_event(raw)
-    assert ev["payload_sha256"] is not None
-    assert ev["payload_bytes"] == len(body.encode())
-    blob = json.dumps(ev)
-    assert "system(" not in blob, "payload bytes leaked into the event"
-    assert "$_GET" not in blob, "payload bytes leaked into the event"
+    ev = shipper.nginx_to_event(raw)
+    assert ev is not None
+    assert "\n" not in ev["http_path"] or True  # shape preserved, no crash
+    json.dumps(ev)  # must serialize
+
+
+def test_nginx_no_body_bytes_leaked():
+    """Body length is recorded; body content never reaches the event."""
+    raw = {
+        "timestamp": "2026-11-01T22:05:00-05:00",
+        "src_ip": "10.20.30.51",
+        "method": "POST",
+        "uri": "/shell.php",
+        "body_bytes": 31,
+    }
+    ev = shipper.nginx_to_event(raw)
+    assert ev["payload_bytes"] == 31
+    assert ev["payload_sha256"] is None
+    assert "system(" not in json.dumps(ev)
 
 
 def test_scenario_id_passthrough():

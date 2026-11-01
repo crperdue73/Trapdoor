@@ -1,17 +1,15 @@
 name: trapdoor
 
 # TRAPDOOR core stack
-# Cowrie (ssh/telnet) + Snare (web) + shipper (normalizer)
+# Cowrie (ssh/telnet) + nginx (web decoy) + shipper (normalizer)
 #
 # Safety rails are configured here, not left to the reader:
 #   - no container has a path from captured payload to execution
-#   - honeypot egress is restricted (see docs/safety.md)
-#   - ports bind to LAB_BIND_IP so the lab subnet, not the world, can reach them
+#   - honeypots have no egress (internal: true)
+#   - ports bind to LAB_BIND_IP so the lab network, not the world, reaches them
 
 x-honeypot: &honeypot
   restart: unless-stopped
-  networks:
-    - honeynet
   logging:
     driver: json-file
     options:
@@ -38,31 +36,67 @@ services:
       - ./cowrie/etc/cowrie.cfg:/cowrie/cowrie-git/etc/cowrie.cfg:ro
       - ./cowrie/etc/userdb.txt:/cowrie/cowrie-git/etc/userdb.txt:ro
       - cowrie_var:/cowrie/cowrie-git/var
-      - ./cowrie/share:/cowrie/share:ro
     ports:
       - "${LAB_BIND_IP:-0.0.0.0}:${COWRIE_SSH_PORT:-2222}:2222"
       - "${LAB_BIND_IP:-0.0.0.0}:${COWRIE_TELNET_PORT:-2223}:2223"
     tmpfs:
       - /tmp:size=64m
-    # No egress: a honeypot that can reach the internet is a pivot waiting
-    # to happen. Everything it needs is baked into the image.
     networks:
-      honeynet:
-        internal: true
+      - honeynet
 
   web:
-    <<: *honeypot
-    image: ghcr.io/mushorg/snare:latest
-    container_name: trapdoor-snare
+    image: nginx:stable-alpine
+    container_name: trapdoor-web
     hostname: ${SENSOR_HOSTNAME:-web01}
+    restart: unless-stopped
+    depends_on:
+      - firstboot
+    security_opt:
+      - no-new-privileges:true
+    # nginx needs to bind :80 and write logs; drops everything else.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
     volumes:
-      - ./web/etc/snare:/opt/snare/etc:ro
-      - snare_var:/opt/snare/var
+      - ./web/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./web/conf.d:/etc/nginx/conf.d:ro
+      - ./web/html:/usr/share/nginx/html:ro
+      - nginx_logs:/var/log/nginx
     ports:
-      - "${LAB_BIND_IP:-0.0.0.0}:${SNARE_PORT:-8080}:80"
+      - "${LAB_BIND_IP:-0.0.0.0}:${WEB_PORT:-8080}:80"
     networks:
-      honeynet:
-        internal: true
+      - honeynet
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # One-shot: nginx's image ships access.log and trapdoor.json as symlinks
+  # to /dev/stdout. Our structured log has to be a real file on the shared
+  # volume or the shipper cannot follow it. Replace the symlinks before
+  # nginx ever starts.
+  firstboot:
+    image: busybox:stable
+    container_name: trapdoor-firstboot
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - >
+        rm -f /var/log/nginx/access.log /var/log/nginx/trapdoor.json;
+        touch /var/log/nginx/access.log /var/log/nginx/trapdoor.json;
+        chown -R 101:101 /var/log/nginx;
+        echo "log volume prepared"
+    volumes:
+      - nginx_logs:/var/log/nginx
+    networks:
+      - honeynet
 
   shipper:
     <<: *honeypot
@@ -78,18 +112,18 @@ services:
       RETENTION_DAYS: ${RETENTION_DAYS:-14}
     volumes:
       - cowrie_var:/in/cowrie:ro
-      - snare_var:/in/snare:ro
+      - nginx_logs:/in/nginx:ro
       - ./out:/out
-      - ./shipper:/app:ro
     networks:
-      honeynet:
-        internal: true
+      - honeynet
 
 networks:
   honeynet:
     driver: bridge
+    # No route to the outside. A honeypot that can reach the internet is
+    # a pivot waiting to happen, and everything it needs is in its image.
     internal: true
 
 volumes:
   cowrie_var:
-  snare_var:
+  nginx_logs:

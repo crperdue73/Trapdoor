@@ -41,7 +41,7 @@ environment**.
 | Component | Role |
 |---|---|
 | **Cowrie** | SSH + Telnet honeypot, emulated shell, captures uploads |
-| **Snare** | Web honeypot — scanners, LFI/RFI, exploit probes |
+| **nginx** | Web decoy — real server, real logs, scanner bait paths |
 | **Shipper** | Normalizes both sources into one JSONL schema |
 | *(optional)* | OpenSearch + Dashboards via `compose.siem.yml` |
 
@@ -120,7 +120,7 @@ These are teaching material, not just hygiene:
 compose.yml
 compose.siem.yml
 cowrie/         Cowrie config + lab filesystem
-web/            Snare config
+web/            nginx decoy: config + html
 schema/         event.schema.json — the contract
 shipper/        normalizer: honeypot dialects -> one schema
 scenarios/      scripted attacks

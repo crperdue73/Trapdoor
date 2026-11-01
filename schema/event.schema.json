@@ -14,7 +14,7 @@
     },
     "sensor": {
       "type": "string",
-      "enum": ["cowrie", "snare"],
+      "enum": ["cowrie", "nginx"],
       "description": "Which honeypot produced this event."
     },
     "event": {
