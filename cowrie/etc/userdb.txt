@@ -1,0 +1,23 @@
+# TRAPDOOR — Cowrie credential database
+#
+# Format:  username:x:password
+# These are the ONLY credentials that get an attacker into the emulated shell
+# when auth_class = UserDB.
+#
+# Why these specific entries: they are the passwords a brute-force wordlist
+# actually hits first. A student watching the transcript should recognize
+# "admin / admin" as a real-world finding, because it is one.
+#
+# This is a DECOY credential file. Nothing here grants access to anything.
+# They are deliberately weak because weak passwords are the lesson.
+
+root:x:toor
+root:x:root
+root:x:123456
+admin:x:admin
+admin:x:password
+admin:x:admin123
+ubuntu:x:ubuntu
+user:x:user
+test:x:test
+pi:x:raspberry
