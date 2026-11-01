@@ -117,3 +117,50 @@ Recorded honestly rather than discovered later. See `docs/limitations.md`.
   length only.
 - Retention is a plain file-age prune, not index-aware.
 - No dashboard yet. `out/events.jsonl` is the interface.
+
+---
+
+## Step 0 — record the auth.log baseline BEFORE you touch anything
+
+Do this before `docker compose up`, before installing anything, before applying
+any firewall rule. It takes ten seconds and it is the only record of what the
+box looked like when it was handed over.
+
+```bash
+wc -l /var/log/auth.log
+grep -oE 'from [0-9.]+' /var/log/auth.log | sort | uniq -c | sort -rn
+last -a | head -20
+ss -tlnp
+date -u +%Y-%m-%dT%H:%M:%SZ
+```
+
+Write the output down somewhere outside this repo, with the timestamp. Do not
+commit it — it contains source addresses.
+
+**Measure the number fresh. Do not carry a number forward.** A baseline of
+"76 lines" was true for one handoff and will be wrong for the next: every login
+between handoff and your session adds to it, including the login you are using
+right now. What carries forward is the **method** — the count, the source IPs,
+the timestamp — not the value.
+
+How to read the diff afterwards:
+
+- **More lines than the baseline, same source IPs:** expected. People log in.
+- **Same lines, different source IP:** not expected. Someone you did not
+  account for has been on this box. Stop and find out who before continuing.
+- **Fewer lines:** the log rotated. Anything above the current file count is
+  invisible to you. Say so rather than assuming it was quiet.
+
+## Step 0b — the handoff note from the box's builder
+
+If someone else provisioned the container (Vera did, for VMID 189), get from
+them: the line count, the source IPs seen, and the timestamp they measured at.
+Their logins will be in the file and they are the only ones who can say so
+truthfully. An unexplained source IP and an explained source IP look identical
+in a log.
+
+For the 189 handoff the record was: **76 lines at 22:45:32Z, all originating
+192.168.111.42 (the engineering host), six sessions 22:37:58–22:45:32, zero
+failed attempts.** Treat that as a worked example of the format, not as a
+constant to reuse.
+

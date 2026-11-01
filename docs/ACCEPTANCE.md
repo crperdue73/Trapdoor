@@ -44,12 +44,22 @@ a pass. A check that cannot run has proven nothing.
 | B2 | A rejected credential is logged with its username | `cowrie.login.failed` with `username` populated |
 | B3 | An accepted credential is logged | `cowrie.login.success` for `root` |
 | B4 | Commands typed in the shell are logged individually | `cowrie.command.input` × 5 (`id`, `uname`, `cat`, `ls`, `echo`) |
-| B5 | No command typed reaches the host | the canary string `TRAPDOOR-CANARY` appears nowhere outside the log |
+| B5 | No command typed reaches the host | `scripts/containment-check.sh` exits 0 |
 | B6 | The run is identical each time | same event order, same usernames, same count |
 
 **B5 is the one that matters.** It is the difference between a decoy and a
-vulnerable server. The check: `grep -r TRAPDOOR-CANARY / --exclude-dir=out`
-should find only the log entry, never a shell output file.
+vulnerable server.
+
+It is checked by `scripts/containment-check.sh`, which generates a **fresh
+canary per run**, types it into the decoy shell in a way that would leave
+traces in `/root`, `/tmp` and the shell history if it actually executed, then
+searches the host for it. Contained = the canary is in the log and nowhere else.
+
+**The canary is never transmitted to anyone, including reviewers.** A fixed or
+shared canary can be planted — by a helpful colleague, by a future maintainer,
+or by the person who wrote the check. Evidence handed to someone should be
+evidence they could not have contaminated. If you need to describe the test to
+another person, describe the method and the search path, not the string.
 
 ---
 
