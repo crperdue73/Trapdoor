@@ -26,6 +26,7 @@ cd "$(dirname "$0")/.." || exit 1
 [[ -f .env ]] && set -a && source .env && set +a
 
 LAB_BIND_IP="${LAB_BIND_IP:-}"
+LAB_CIDR="${LAB_CIDR:-}"
 COWRIE_SSH_PORT="${COWRIE_SSH_PORT:-2222}"
 COWRIE_TELNET_PORT="${COWRIE_TELNET_PORT:-2223}"
 WEB_PORT="${WEB_PORT:-8080}"
@@ -357,6 +358,46 @@ except OSError:
         esac
     else
         skip "egress check — cannot run python3 in the cowrie container, NOT RUN"
+    fi
+fi
+
+# --- 7. host firewall ------------------------------------------------------
+# Docker publishes ports by writing its own iptables rules in the DOCKER chain,
+# which are evaluated BEFORE any rule this repo adds to INPUT. So the honest
+# question is not "did we write a firewall rule" but "what does the packet
+# path actually look like".
+#
+# Added 2026-11-02 after finding the live box with zero TRAPDOOR rules applied
+# and LAB_CIDR=192.168.0.0/16 — i.e. the whole farm could reach the decoy, and
+# nothing said so. That may be the intended teaching model, but it should be a
+# decision someone made, not a line nobody looked at.
+echo "7. host firewall"
+
+if ! command -v iptables >/dev/null 2>&1; then
+    skip "firewall — iptables not installed, nothing examined"
+else
+    TRAPDOOR_RULES=$(iptables -S 2>/dev/null | grep -c 'TRAPDOOR' || true)
+    UFW_STATE=$(ufw status 2>/dev/null | head -1 || true)
+
+    if [[ -n "$UFW_STATE" ]]; then
+        ok "ufw is present: ${UFW_STATE#Status: }"
+    fi
+
+    if [[ "$TRAPDOOR_RULES" -eq 0 ]]; then
+        warn "no TRAPDOOR rules applied (make firewall --apply); INPUT policy + Docker chains only"
+    else
+        ok "${TRAPDOOR_RULES} TRAPDOOR rules present"
+    fi
+
+    # The claim under test: are the decoy ports reachable from outside
+    # LAB_CIDR? We cannot probe that from here, so we do not pretend to.
+    # What we CAN state is the scope, and make it visible every run.
+    if [[ "$LAB_CIDR" == "192.168.0.0/16" ]]; then
+        warn "LAB_CIDR is the whole farm /16 — every host on the network can reach the decoy"
+    elif [[ -z "$LAB_CIDR" ]]; then
+        bad "LAB_CIDR is unset — firewall rules have no scope to enforce"
+    else
+        ok "LAB_CIDR scoped to ${LAB_CIDR}"
     fi
 fi
 
