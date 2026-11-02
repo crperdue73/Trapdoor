@@ -1,0 +1,15 @@
+[Unit]
+Description=TRAPDOOR health check (drift + verify)
+Documentation=file:///opt/trapdoor/docs/ACCEPTANCE.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/trapdoor
+ExecStart=/usr/bin/make health
+# Exit 2 is drift, 1 is a failed verify, 3 is could-not-run. All are
+# non-zero on purpose: this unit must never look healthy because a check
+# was skipped.
+TimeoutStartSec=300
+Nice=10
