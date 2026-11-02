@@ -191,6 +191,13 @@ def nginx_to_event(raw: dict[str, Any]) -> dict[str, Any] | None:
     return emit(ev, {})
 
 
+# Byte offset per path, so a restarted tail() resumes where the last one
+# stopped instead of seeking to EOF and skipping whatever arrived in between.
+# The earlier per-generator inode check could not survive being restarted,
+# and restarting is exactly what happens between polls.
+_OFFSETS: dict[Path, int] = {}
+
+
 def tail(path: Path) -> Iterator[dict[str, Any]]:
     """Follow a JSONL file, yielding parsed objects. Survives truncation/rotation.
 
@@ -206,6 +213,7 @@ def tail(path: Path) -> Iterator[dict[str, Any]]:
     """
     inode = None
     handle = None
+    first_pass = False
     while True:
         try:
             if not path.exists():
@@ -215,20 +223,59 @@ def tail(path: Path) -> Iterator[dict[str, Any]]:
                         handle.close()
                     handle = None
                     inode = None
-                time.sleep(POLL_SECONDS)
-                continue
+                # Never spin. main() also sleeps, but a missing file is the
+                # one case where returning instantly would turn two sources
+                # into a hot loop on a quiet box.
+                yield from ()
+                return
             st = path.stat()
             if inode != st.st_ino or handle is None:
                 if handle:
                     handle.close()
                 handle = path.open("r", encoding="utf-8", errors="replace")
-                handle.seek(st.st_size)
+                if path in _OFFSETS:
+                    # We have followed this file before: resume exactly where
+                    # we stopped, so nothing written during a restart is lost.
+                    start = _OFFSETS[path]
+                    if start > st.st_size:  # truncated while we were away
+                        start = 0
+                else:
+                    # First time we have ever seen this file. Starting at EOF
+                    # is deliberate: on a first deployment the log is already
+                    # full of events from before we were watching, and
+                    # replaying the whole history would make the campaign
+                    # look like it began when the shipper started.
+                    start = st.st_size
+                first_pass = path not in _OFFSETS
+                handle.seek(start)
                 inode = st.st_ino
-                LOG.info("following %s", path)
+                LOG.info("following %s at byte %d%s", path, start,
+                         " (skipping history)" if first_pass else "")
+            if first_pass:
+                # First sight of an existing file: skip its history and record
+                # where "now" is, then get out of the way.
+                #
+                # The offset MUST be recorded even though we read nothing.
+                # Returning without it leaves the file registered as unseen,
+                # so the next restart seeks to EOF again, reads nothing, and
+                # returns - and every restart re-skips the whole file. That
+                # is exactly the bug the resume test caught: the generator
+                # looked correct line by line and could never advance past
+                # its first night.
+                _OFFSETS[path] = handle.tell()
+                first_pass = False
+                return
             line = handle.readline()
+            if line:
+                _OFFSETS[path] = handle.tell()
             if not line:
-                time.sleep(POLL_SECONDS)
-                continue
+                # Return control instead of sleeping in here. A sleep inside
+                # the generator is a sleep the round-robin cannot see: two
+                # sources meant two POLL_SECONDS per pass plus the outer
+                # loop's own sleep, so a single request took ~15-20s to
+                # appear in out/events.jsonl while everything reported
+                # healthy. The outer loop owns the pacing now.
+                return
             line = line.strip()
             if not line:
                 continue
@@ -237,7 +284,7 @@ def tail(path: Path) -> Iterator[dict[str, Any]]:
             except json.JSONDecodeError:
                 LOG.warning("bad json in %s", path)
         except FileNotFoundError:
-            time.sleep(POLL_SECONDS)
+            return
 
 
 def append(out: Path, event: dict[str, Any]) -> None:
@@ -276,6 +323,11 @@ def main() -> None:
             try:
                 raw = next(gen)
             except StopIteration:
+                # tail() ended because the file is quiet right now. Start a
+                # fresh one; it resumes at the same offset because the file
+                # position is carried by the inode check, not the object.
+                idx = gens.index((path, fn, gen))
+                gens[idx] = (path, fn, tail(path))
                 continue
             try:
                 event = fn(raw)

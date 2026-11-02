@@ -159,8 +159,36 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
     raw_log="${raw_vol}/trapdoor.json"
     if [[ -f "${raw_log}" ]]; then
         total=$(wc -l < "${raw_log}")
-        good=$(jq -c . "${raw_log}" 2>/dev/null | wc -l)
-        if [[ "${total:-0}" -eq 0 ]]; then
+        # Parse with python3, NOT jq. jq is not installed on the target box and
+        # "jq missing" counted as "0 valid lines", which reads exactly like a
+        # broken log format. A check that cannot succeed is not a check, and
+        # "tool absent" must never be reported as "thing broken".
+        if command -v python3 >/dev/null 2>&1; then
+            good=$(python3 -c '
+import json, sys
+n = 0
+with open(sys.argv[1], "r", errors="replace") as fh:
+    for line in fh:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            json.loads(line)
+            n += 1
+        except Exception:
+            pass
+print(n)
+' "${raw_log}" 2>/dev/null || echo "PARSE_FAILED")
+        else
+            good="NO_PARSER"
+        fi
+        if [[ "${good}" == "NO_PARSER" || "${good}" == "PARSE_FAILED" ]]; then
+            skip "cannot check the log format — no working parser on this host (C8 NOT RUN)"
+            good=-1
+        fi
+        if [[ "${good:-0}" -lt 0 ]]; then
+            :   # already reported above
+        elif [[ "${total:-0}" -eq 0 ]]; then
             skip "nginx raw log exists but is empty — nothing has been sent yet"
         elif [[ "${good}" -lt "${total}" ]]; then
             skip "nginx raw log is INVALID JSON on $((total-good)) of ${total} lines (C8)"

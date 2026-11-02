@@ -138,6 +138,37 @@ def test_nginx_status_missing_is_null_not_zero():
     assert ev["http_status"] is None, ev["http_status"]
 
 
+def test_tail_resumes_where_it_stopped_across_restarts():
+    """A restarted tail() must not skip lines written while it was away.
+
+    tail() now yields control between polls instead of sleeping, so the
+    generator is restarted constantly. The original design carried its file
+    position in the generator object, which meant every restart seeked to EOF
+    and dropped whatever had arrived in the gap. Offsets are module state now.
+    """
+    import tempfile, json
+    from pathlib import Path as _P
+
+    with tempfile.TemporaryDirectory() as d:
+        log = _P(d) / "x.jsonl"
+        log.write_text(json.dumps({"n": 1}) + "\n")
+
+        shipper._OFFSETS.pop(log, None)
+
+        # First sight of a file that already has content: its history is
+        # skipped on purpose, and the generator yields nothing yet.
+        first = shipper.tail(log)
+        assert list(first) == [], "first sight must not replay history"
+
+        # the file grows while nothing is following it
+        with log.open("a") as fh:
+            fh.write(json.dumps({"n": 2}) + "\n")
+
+        # a fresh generator (a "restart") must pick up n=2, not skip to EOF
+        second = shipper.tail(log)
+        assert next(second) == {"n": 2}, "restarted tail() lost a line"
+
+
 def test_tail_does_not_create_missing_file():
     """The shipper must be able to follow a read-only log directory.
 
