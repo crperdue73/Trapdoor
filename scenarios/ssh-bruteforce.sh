@@ -55,6 +55,12 @@ CREDS=(
   "root:toor"         # expected: ACCEPTED (present in cowrie/etc/userdb.txt)
 )
 
+# Header helper defined before anything uses it. It lived below claim 0 for
+# one commit and every scenario run opened with "say: command not found" —
+# harmless, invisible if you only read the parts you expected to see, and
+# exactly the kind of stderr noise that teaches students to ignore stderr.
+say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+
 # --- claim 0: the list has the shape the lesson needs ----------------------
 # This is the guard that turns "the transcript looks fine" into a check.
 say "0. credential list matches the decoy's userdb"
@@ -113,8 +119,6 @@ for cred in "${CREDS[@]:0:${#CREDS[@]}-1}"; do
     fi
 done
 echo "   OK: shape is correct"
-
-say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 command -v sshpass >/dev/null 2>&1 || {
     echo "sshpass is required (apt install sshpass)." >&2
