@@ -1,4 +1,4 @@
-# TRAPDOOR 🕷️
+# TRAPDOOR 
 
 An internal honeypot lab for teaching **CompTIA Network+** and **Security+**.
 
