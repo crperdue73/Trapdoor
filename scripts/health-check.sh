@@ -36,10 +36,18 @@ LATEST="${STATUS_DIR}/health-latest.txt"
     bash scripts/verify.sh
     echo "verify_exit=$?"
     echo
-    echo "drift_exit=${DRIFT_RC} verify_exit=${VERIFY_RC}"
 } > "$REPORT" 2>&1
 
-cp -f "$REPORT" "$LATEST"
+true
+
+# Make health reports easy to find without hunting for a timestamp.
+# Only link reports that actually reached a verdict — a half-written report
+# labelled "latest" is a way to read a truncated file as the current state.
+if grep -qE '^verify_exit=[0-9]+$' "$REPORT" 2>/dev/null; then
+    cp -f "$REPORT" "$LATEST"
+else
+    echo "WARNING: report is incomplete, not promoted to health-latest.txt" >&2
+fi
 
 # Keep 30 days of reports. Small files, but unbounded growth is still rot.
 find "$STATUS_DIR" -name 'health-*.txt' ! -name 'health-latest.txt' -mtime +30 -delete 2>/dev/null || true
