@@ -1,6 +1,12 @@
-# TRAPDOOR — Cowrie credential database
+# TRAPDOOR - Cowrie credential database
 #
 # Format:  username:x:password
+#
+# ASCII ONLY. Cowrie reads this file with encoding="ascii" and an
+# em dash in this comment block crashed every login attempt with a
+# UnicodeDecodeError until it was caught. The connection still
+# succeeded and the banner still appeared, so it looked exactly like
+# a rejected password. verify.sh checks this now.
 # These are the ONLY credentials that get an attacker into the emulated shell
 # when auth_class = UserDB.
 #

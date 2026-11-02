@@ -149,6 +149,22 @@ if [[ -s out/events.jsonl ]]; then
     fi
 fi
 
+# Cowrie reads userdb.txt with encoding="ascii". A single non-ASCII byte -
+# one em dash in a comment - makes every authentication attempt raise
+# UnicodeDecodeError. The TCP connection succeeds and the banner is served,
+# so from outside it looks exactly like a wrong password, forever. This check
+# exists because that is precisely what happened on the first deployment.
+if [[ -f cowrie/etc/userdb.txt ]]; then
+    if python3 -c 'import sys; open(sys.argv[1],"rb").read().decode("ascii")' \
+            cowrie/etc/userdb.txt 2>/dev/null; then
+        ok "cowrie/etc/userdb.txt is ASCII (Cowrie will be able to read it)"
+    else
+        skip "cowrie/etc/userdb.txt contains NON-ASCII bytes — every login will fail"
+    fi
+else
+    skip "cowrie/etc/userdb.txt not found — cannot check the credential file"
+fi
+
 # The decoy can answer perfectly while the log it writes is unparseable, and
 # then every downstream check passes on an empty file. Parse the raw log
 # directly, before the shipper has had a chance to hide the problem by
