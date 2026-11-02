@@ -28,6 +28,7 @@ SENSOR_NAME = os.environ.get("SENSOR_NAME", "lab-sensor-01")
 OUT_DIR = Path(os.environ.get("OUT_DIR", "/out"))
 RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "14"))
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", "5"))
+DRAIN_PER_PASS = 500
 
 # Cowrie writes into log/cowrie/, a nested directory, not log/ directly.
 # This path was wrong for the first three deployments and the failure was
@@ -325,24 +326,36 @@ def main() -> None:
 
     while True:
         progressed = False
-        for path, fn, gen in gens:
-            try:
-                raw = next(gen)
-            except StopIteration:
-                # tail() ended because the file is quiet right now. Start a
-                # fresh one; it resumes at the same offset because the file
-                # position is carried by the inode check, not the object.
-                idx = gens.index((path, fn, gen))
-                gens[idx] = (path, fn, tail(path))
+        # Drain each source per pass instead of taking one line from each.
+        # One line per loop meant a six-line burst took six poll cycles to
+        # land and interleaved the two sensors in time order, which shredded
+        # a single session transcript. A bounded drain keeps a single pass
+        # responsive while letting a burst arrive intact.
+        for idx, (path, fn, gen) in enumerate(gens):
+            for _ in range(DRAIN_PER_PASS):
+                try:
+                    raw = next(gen)
+                except StopIteration:
+                    # tail() ended because the file is quiet right now. Start
+                    # a fresh one; it resumes at the same offset because the
+                    # offsets are carried in module state, not the object.
+                    gens[idx] = (path, fn, tail(path))
+                    break
+                try:
+                    event = fn(raw)
+                except Exception:  # a malformed line must never kill the shipper
+                    LOG.exception("normalizer error on %s", path)
+                    continue
+                if event:
+                    append(out, event)
+                    progressed = True
+                    continue
+                # None means the normalizer deliberately dropped the line
+                # (e.g. cowrie.client.kex). Keep draining; only an empty
+                # read stops the pass.
                 continue
-            try:
-                event = fn(raw)
-            except Exception:  # a malformed line must never kill the shipper
-                LOG.exception("normalizer error on %s", path)
+            else:
                 continue
-            if event:
-                append(out, event)
-                progressed = True
         if time.time() - last_prune > 3600:
             prune()
             last_prune = time.time()
