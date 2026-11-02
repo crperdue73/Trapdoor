@@ -149,6 +149,22 @@ if [[ -s out/events.jsonl ]]; then
     fi
 fi
 
+# Paths inside the cowrie image that our config points at. These were wrong
+# once - copied from an older Cowrie layout, loaded without complaint, and
+# only failed when a real session started - so they get checked against the
+# image instead of being remembered.
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    for cfg_path in $(grep -oE '/cowrie/[A-Za-z0-9_./-]+\.(pickle|txt|json|cfg)' \
+            cowrie/etc/cowrie.cfg 2>/dev/null | sort -u); do
+        if docker run --rm --entrypoint /bin/sh "$(docker compose config 2>/dev/null | \
+                awk '/image:/{print $2; exit}')" -c "test -f ${cfg_path}" 2>/dev/null; then
+            ok "cowrie image has ${cfg_path}"
+        else
+            skip "cowrie image is MISSING ${cfg_path} (every session will fail)"
+        fi
+    done
+fi
+
 # Cowrie reads userdb.txt with encoding="ascii". A single non-ASCII byte -
 # one em dash in a comment - makes every authentication attempt raise
 # UnicodeDecodeError. The TCP connection succeeds and the banner is served,
