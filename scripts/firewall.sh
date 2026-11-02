@@ -143,7 +143,14 @@ cat <<EOF
 #       ! -s ${LAB_CIDR} -j DROP
 #
 # That form is correct and reachable (DOCKER-USER counted 12 pkts from one
-# off-box request). It is not applied by default for one honest reason: with
+# off-box request), but note iptables accepts only ONE --source per rule; a
+# second `! -s <bridge>` is rejected with "multiple --source options not
+# allowed". To allow the lab AND the host's own hairpinned traffic (whose
+# source is the bridge address, measured 172.22.0.1, not inside LAB_CIDR)
+# AND drop the rest, express it as ACCEPT-per-source followed by a DROP.
+# That is what --apply below builds; the negation above is left as the
+# shortest correct form only while there is a single source to allow.
+#
 # LAB_CIDR at /16 the negated source match matches nothing, so it would sit
 # in the chain
 # looking like a control while allowing every host on the farm. A near-vacuous
@@ -172,23 +179,28 @@ BACKUP="/root/iptables-backup-${STAMP}.rules"
 iptables-save > "$BACKUP"
 echo "rollback file: ${BACKUP}"
 
-# The rule has to allow the host itself, not just LAB_CIDR.
+# iptables allows only ONE --source per rule, so the earlier `! -s A ! -s B`
+# form is rejected outright with "multiple --source options not allowed".
+# The way to express "allow these, drop everything else" in one chain is to
+# ACCEPT the allowed sources and DROP at the end.
 #
-# Traffic from this host to its own published ports is hairpinned through
-# POSTROUTING, so its source is rewritten to the bridge address (measured:
-# 172.22.0.1) — which is NOT inside 192.168.0.0/16. A rule written as
-# `! -s $LAB_CIDR -j DROP` therefore drops the host's own health check and
-# the verify banner probe. That is exactly what happened on .45: verify went
-# from green to "no SSH banner on port 2222", and removing this rule restored
-# it instantly.
-#
-# So the rule accepts the lab AND every local Docker bridge, then drops.
-BRIDGES=$(ip -4 -o addr show 2>/dev/null | awk '$2 ~ /^(br-|docker0)/ {split($4,a,"/"); print a[1]}' | paste -sd' ')
+# Rules are inserted in reverse so the chain ends up in reading order:
+#   -s LAB_CIDR -j ACCEPT
+#   -s bridge1  -j ACCEPT
+#   -j DROP
+PORTS="${COWRIE_SSH_PORT},${COWRIE_TELNET_PORT},${WEB_PORT}"
 
-SOURCE_MATCH=(! -s "$LAB_CIDR")
-for b in $BRIDGES; do
-    SOURCE_MATCH+=(! -s "$b")
-done
+# Rules are appended in reading order, but the ACCEPTs must sit above the DROP
+# on every re-run, so the whole set is torn down and rebuilt.
+#
+# This MUST be recomputed here: the --apply path re-execs as root, and the
+# previous version of this block deleted the enumeration from the top of the
+# file while leaving these uses behind. Under `set -u` that is an unbound
+# variable; without it, an empty string and a silently vacuous rule.
+if ! BRIDGES=$(ip -4 -o addr show 2>/dev/null \
+        | awk '$2 ~ /^(br-|docker0)/ {split($4,a,"/"); print a[1]}' | paste -sd' '); then
+    BRIDGES=""
+fi
 
 if [[ -z "$BRIDGES" ]]; then
     echo "REFUSING: cannot enumerate Docker bridge addresses, so a source-" >&2
@@ -199,17 +211,27 @@ fi
 
 echo "allowing sources: ${LAB_CIDR} plus local bridges: ${BRIDGES}"
 
-RULE_ARGS=(-p tcp -m multiport --dports "${COWRIE_SSH_PORT},${COWRIE_TELNET_PORT},${WEB_PORT}" "${SOURCE_MATCH[@]}" -j DROP)
+# Build the final chain state we want, as one array of rule specs, then apply
+# it idempotently.
+SPECS=()
+for src in "$LAB_CIDR" $BRIDGES; do
+    SPECS+=("-p tcp -m multiport --dports ${PORTS} -s ${src} -j ACCEPT")
+done
+SPECS+=("-p tcp -m multiport --dports ${PORTS} -j DROP")
 
-# Refuse to stack duplicates. `iptables -I` on every run is how a chain grows
-# to two hundred identical lines over a year and nobody notices until a
-# change takes ten minutes to locate.
-if iptables -C DOCKER-USER "${RULE_ARGS[@]}" 2>/dev/null; then
-    echo "rule already present, not adding a duplicate"
-else
-    iptables -I DOCKER-USER "${RULE_ARGS[@]}"
-    echo "inserted into DOCKER-USER"
-fi
+# Clear any previous version of this ruleset so re-runs are convergent rather
+# than additive. Only touches rules on exactly these three ports.
+while read -r rule; do
+    [[ -z "$rule" ]] && continue
+    # shellcheck disable=SC2086
+    iptables -D DOCKER-USER $rule 2>/dev/null || true
+done < <(iptables -S DOCKER-USER | grep -- "--dports ${PORTS}" | sed 's/^-A DOCKER-USER //' || true)
+
+for spec in "${SPECS[@]}"; do
+    # shellcheck disable=SC2086
+    iptables -A DOCKER-USER $spec
+done
+echo "wrote $((${#SPECS[@]})) rules to DOCKER-USER"
 
 # ---------------------------------------------------------------------------
 # Prove it did what it says, rather than reporting that the command exited 0.
@@ -217,13 +239,26 @@ fi
 # ---------------------------------------------------------------------------
 
 echo
-echo "== checking the claim =="
+ echo "== checking the claim =="
 FAIL=0
 
-if iptables -C DOCKER-USER "${RULE_ARGS[@]}" 2>/dev/null; then
-    echo "  OK   DOCKER-USER rule is present"
+# Every spec must be present exactly once, and the chain must end in a DROP
+# for these ports — otherwise the accepts are decoration again.
+for spec in "${SPECS[@]}"; do
+    # shellcheck disable=SC2086
+    if iptables -C DOCKER-USER $spec 2>/dev/null; then
+        echo "  OK   present: ${spec}"
+    else
+        echo "  FAIL missing: ${spec}" >&2
+        FAIL=1
+    fi
+done
+
+DUPES=$(iptables -S DOCKER-USER | grep -c -- "--dports ${PORTS}" || true)
+if [[ "$DUPES" -eq "${#SPECS[@]}" ]]; then
+    echo "  OK   chain holds ${DUPES} rules, no duplicates"
 else
-    echo "  FAIL DOCKER-USER rule is NOT present after apply" >&2
+    echo "  FAIL expected ${#SPECS[@]} rules, found ${DUPES} — duplicates or gaps" >&2
     FAIL=1
 fi
 
