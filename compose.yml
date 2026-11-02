@@ -42,6 +42,7 @@ services:
     tmpfs:
       - /tmp:size=64m
     networks:
+      - labnet
       - honeynet
 
   web:
@@ -70,6 +71,7 @@ services:
     ports:
       - "${LAB_BIND_IP:-0.0.0.0}:${WEB_PORT:-8080}:80"
     networks:
+      - labnet
       - honeynet
     logging:
       driver: json-file
@@ -118,6 +120,25 @@ services:
       - honeynet
 
 networks:
+  # Two networks, because one could not do both jobs.
+  #
+  # This bit us on the first real deployment: containers were all up and
+  # healthy, the web decoy answered 200 on its container IP, and NOTHING
+  # could reach it from the host. No error, no warning - Docker simply does
+  # not publish ports from a container whose only network is internal,
+  # because publishing a port means routing to the outside and we had told
+  # it there was no outside. The stack looked fine and was unreachable.
+  #
+  # So: inbound reachability and outbound containment are separate networks.
+  #   labnet   - NOT internal. Carries the published ports only.
+  #   honeynet - internal, as before. Carries container-to-container traffic
+  #              and is the reason a compromised decoy has no route out.
+  #
+  # The honeypot is attached to both. It can be reached from the lab; it
+  # cannot reach the lab or the internet. Publishing a port does not open an
+  # egress path - the default route still goes to honeynet, which has none.
+  labnet:
+    driver: bridge
   honeynet:
     driver: bridge
     # No route to the outside. A honeypot that can reach the internet is

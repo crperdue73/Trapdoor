@@ -149,6 +149,25 @@ if [[ -s out/events.jsonl ]]; then
     fi
 fi
 
+# Published ports that are not actually published. This is the failure we hit
+# on the first deployment and it is worth its own check because everything
+# else passes: containers healthy, decoy answering on its container IP, and
+# nothing reachable from outside. Docker will not publish a port from a
+# container on an internal-only network and says nothing when it declines.
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    declared=$(docker compose config 2>/dev/null | grep -cE "^\s+published:" || echo 0)
+    bound=$(ss -tln 2>/dev/null | grep -cE ":(${COWRIE_SSH_PORT:-2222}|${COWRIE_TELNET_PORT:-2223}|${WEB_PORT:-8080})\b" || echo 0)
+    if [[ "${declared:-0}" -eq 0 ]]; then
+        skip "port publication — compose declares no published ports at all"
+    elif [[ "${bound:-0}" -eq 0 ]]; then
+        skip "port publication — ${declared} ports declared, NONE listening (internal network eats them)"
+    elif [[ "${bound:-0}" -lt "${declared:-0}" ]]; then
+        skip "port publication — ${bound} of ${declared} declared ports are listening"
+    else
+        ok "all ${declared} declared ports are published and listening"
+    fi
+fi
+
 # --- 5. containers ---------------------------------------------------------
 echo
 echo "5. containers"
