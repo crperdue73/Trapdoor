@@ -144,7 +144,8 @@ cat <<EOF
 #
 # That form is correct and reachable (DOCKER-USER counted 12 pkts from one
 # off-box request). It is not applied by default for one honest reason: with
-# LAB_CIDR at /16 the `! -s` matches nothing, so it would sit in the chain
+# LAB_CIDR at /16 the negated source match matches nothing, so it would sit
+# in the chain
 # looking like a control while allowing every host on the farm. A near-vacuous
 # rule that looks like a boundary is worse than no rule, because it stops
 # anyone from asking the question.
