@@ -29,7 +29,13 @@ OUT_DIR = Path(os.environ.get("OUT_DIR", "/out"))
 RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "14"))
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", "5"))
 
-COWRIE_LOG = Path("/in/cowrie/log/cowrie.json")
+# Cowrie writes into log/cowrie/, a nested directory, not log/ directly.
+# This path was wrong for the first three deployments and the failure was
+# completely silent: tail() treats a missing file as "nothing to read yet",
+# waits quietly, and the shipper reports healthy the whole time. A missing
+# input looks exactly like a quiet network from the inside.
+# Env-overridable so the path can follow the image without a code change.
+COWRIE_LOG = Path(os.environ.get("COWRIE_LOG", "/in/cowrie/log/cowrie/cowrie.json"))
 NGINX_LOG = Path("/in/nginx/trapdoor.json")
 
 # Cowrie eventid -> our event name.

@@ -138,6 +138,21 @@ def test_nginx_status_missing_is_null_not_zero():
     assert ev["http_status"] is None, ev["http_status"]
 
 
+def test_both_log_paths_exist_in_the_image():
+    """The shipper's input paths must match where the producers actually write.
+
+    Three deployments ran with a working shipper pointed at a file that was
+    never created. tail() treats a missing file as "nothing yet", so the
+    container was healthy and idle forever. This test cannot check a Docker
+    image, so it pins the paths to the constants and leaves the image check
+    to verify.sh - but it does stop a careless edit from moving them back.
+    """
+    assert str(shipper.COWRIE_LOG).endswith("/cowrie/cowrie.json"), (
+        "Cowrie writes into a nested log/cowrie/ directory; "
+        "a path ending in log/cowrie.json will never exist")
+    assert "/in/nginx/" in str(shipper.NGINX_LOG)
+
+
 def test_tail_resumes_where_it_stopped_across_restarts():
     """A restarted tail() must not skip lines written while it was away.
 
