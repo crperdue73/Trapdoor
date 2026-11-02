@@ -101,3 +101,40 @@ it said *"a check that cannot run is not a check that passed"* — and the bug
 was still there. Writing the principle is not the same as applying it. The
 fix distinguishes three outcomes: CONNECTED (fail), REFUSED/UNREACHABLE
 (pass), and NOT RUN (skip, sets FAIL). It never collapses them.
+
+## The same shape a third time: a check that printed the good answer
+
+Found on 2026-11-02 by running `verify.sh` on a host where the stack was down.
+Steps 1, 2, 3, 5 and 6 all behaved — they FAILed, or refused a verdict with
+NOT RUN. Step 4 printed:
+
+    OK   all 0
+    0 declared ports are published and listening
+
+for a stack with zero running containers.
+
+The cause was `grep -c … || echo 0`. `grep -c` prints `0` when it matches
+nothing **and exits 1**, so the fallback appended a second line to the
+variable. Every `[[ "${declared:-0}" -eq 0 ]]` after that died with
+`syntax error in expression`, bash had nowhere to report it but stderr,
+nothing was reading stderr, and the arithmetic tests failing meant control
+fell through to the success branch. Bare `0` is truthy in bash, so "no ports
+declared at all" became "all 0 declared ports are published".
+
+Three instances of one shape now, all mine:
+
+1. A `FORWARD` rule whose `|| true` ate a failed variable
+2. The egress probe that read a failed `exec` as containment holding
+3. This one, where there was no `|| true` to blame at all
+
+The lesson is not "don't use `|| echo 0`". It is that **a check is a program,
+and its error handling has to be as deliberate as its logic.** Verify scripts
+are the worst place to be sloppy, because their failure mode is not a crash —
+it is a green line.
+
+Fixed by computing `docker compose config` once, failing closed with a NOT RUN
+verdict when it produces nothing, and relying on `${var:-0}` only for the
+genuinely-empty case. Verified both directions on the live box: on a stopped
+stack it now reports `NOT RUN — 3 ports declared, NONE listening`, and on a
+running stack it reports `OK — all 3 declared ports are published and
+listening`. The negative test mattered more than the positive one.
