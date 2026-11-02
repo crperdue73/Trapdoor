@@ -389,15 +389,23 @@ else
         ok "${TRAPDOOR_RULES} TRAPDOOR rules present"
     fi
 
-    # The claim under test: are the decoy ports reachable from outside
-    # LAB_CIDR? We cannot probe that from here, so we do not pretend to.
-    # What we CAN state is the scope, and make it visible every run.
-    if [[ "$LAB_CIDR" == "192.168.0.0/16" ]]; then
-        warn "LAB_CIDR is the whole farm /16 — every host on the network can reach the decoy"
-    elif [[ -z "$LAB_CIDR" ]]; then
-        bad "LAB_CIDR is unset — firewall rules have no scope to enforce"
+    # The claim under test, measured 2026-11-02: published decoy ports are
+    # DNATed, so ufw's INPUT chain never sees off-box traffic to them and
+    # INPUT rules cannot restrict the decoy. DOCKER-USER is the hook that
+    # does. What we report is the scope those rules enforce.
+    if [[ -z "$LAB_CIDR" ]]; then
+        bad "LAB_CIDR is unset — no scope to enforce"
+    elif [[ "$LAB_CIDR" == "192.168.0.0/16" ]]; then
+        warn "LAB_CIDR is the whole farm /16 — every host on the network can reach the decoy (DOCKER-USER rule matches nothing)"
+        warn "  this is not a firewall failure; it is scope set too wide. Narrow LAB_CIDR for a real boundary"
     else
         ok "LAB_CIDR scoped to ${LAB_CIDR}"
+    fi
+
+    # ufw looks like protection for the decoy and is not. Say so on every run
+    # rather than letting 'ufw is active' read as 'the honeypot is protected'.
+    if [[ -n "$UFW_STATE" ]]; then
+        warn "ufw does not cover the decoy: published ports are DNATed and bypass INPUT"
     fi
 fi
 

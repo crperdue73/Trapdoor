@@ -6,9 +6,35 @@
 # default is print-only and a human reads it first.
 #
 # ---------------------------------------------------------------------------
-# WHAT THIS SCRIPT USED TO DO, AND WHY IT WAS REWRITTEN (2026-11-02)
+# WHAT ACTUALLY HAPPENS TO A PACKET (measured on .45, 2026-11-02)
 #
-# The previous version emitted six rules:
+# I got this wrong twice in one afternoon, in opposite directions, so it is
+# written down here rather than rediscovered a third time.
+#
+# Off-box request to http://192.168.111.45:8080, sent from 192.168.111.43:
+#
+#   nat PREROUTING -> DOCKER chain -> DNAT to the container
+#   FORWARD -> DOCKER-USER  <-- visible here (counted 12 pkts / 2230 bytes)
+#   INPUT: never touched
+#
+# So:
+#   - DOCKER-USER rules DO see off-box traffic. That is the one usable hook.
+#   - INPUT rules do not, for DNATed traffic. An INPUT DROP on 8080 blocks
+#     only loopback (measured: .45 -> 200 but 127.0.0.1 -> 000).
+#   - ufw's INPUT chain therefore does not protect the decoy at all.
+#
+# With LAB_CIDR=192.168.0.0/16 the DOCKER-USER rule `! -s 192.168.0.0/16`
+# matches nothing, because every host on this farm is inside /16. The rule is
+# present, reachable, correct, and does nothing. That is not a bug in the
+# rule; it is the rule faithfully implementing a scope that was set too wide.
+#
+# Consequence worth stating plainly: on this box the decoy is open to the
+# whole /16, and the only reason it is not open to the internet is that the
+# farm is triple-NATed. Not because of the firewall.
+# ---------------------------------------------------------------------------
+#
+# The previous version emitted six rules, all of which failed to do what the
+# file implied (2026-11-02):
 #
 #   iptables -A INPUT -p tcp -s $LAB_CIDR --dport 2222 -j ACCEPT
 #   iptables -A INPUT -p tcp -s $LAB_CIDR --dport 2223 -j ACCEPT
@@ -33,6 +59,11 @@
 #    So the rule did not close the door to students. It closed it to the
 #    health check, which curls the bound address and would have started
 #    failing verify for a reason nobody could see in the firewall.
+#
+#    Correction to an earlier note in this header: the caveat about rules not
+#    seeing INPUT applies where DNAT bypasses INPUT entirely, and off-box
+#    traffic is DNATed. So the INPUT DROPs were wrong for two reasons, not
+#    one: unreachable for the lab, and harmful to loopback.
 #
 # 2. THE ACCEPTS NEVER FIRED AT ALL.
 #    ufw is active on this host and its chain is jumped from INPUT ahead of
@@ -97,11 +128,11 @@ cat <<EOF
 #
 # LAB_CIDR = ${CIDR_NOTE}
 #
-# This script does NOT add INPUT rules to close the decoy ports, because it
-# cannot do so correctly on this host: ufw's deny chain runs first (appended
-# ACCEPTs are unreachable) and a broad DROP on the published ports reaches
-# loopback and the health check before it reaches anything else. Both were
-# measured on .45 on 2026-11-02; see the header of this file.
+# This script does NOT add INPUT rules to close the decoy ports, because on
+# this host INPUT never sees them: published ports are DNATed, and off-box
+# traffic goes nat PREROUTING -> DOCKER -> FORWARD/DOCKER-USER. An INPUT DROP
+# on 8080 reaches only loopback — measured on .45: 192.168.111.45 -> 200 while
+# 127.0.0.1 -> 000 — so it breaks the health check and closes nothing.
 #
 # IF YOU GENUINELY NEED TO RESTRICT THE DECOY AT THE FIREWALL LAYER, the rule
 # belongs in DOCKER-USER, which Docker evaluates before its own FORWARD rules
@@ -111,10 +142,15 @@ cat <<EOF
 #       --dports ${COWRIE_SSH_PORT},${COWRIE_TELNET_PORT},${WEB_PORT} \\
 #       ! -s ${LAB_CIDR} -j DROP
 #
-# That form is correct for DNAT'd traffic. The form this script used to emit
-# was not, and would have taken down the health check while leaving the decoy
-# open. Left out of --apply deliberately: on a flat /16 it is near-vacuous,
-# and a near-vacuous rule that looks like a control is worse than no rule.
+# That form is correct and reachable (DOCKER-USER counted 12 pkts from one
+# off-box request). It is not applied by default for one honest reason: with
+# LAB_CIDR at /16 the `! -s` matches nothing, so it would sit in the chain
+# looking like a control while allowing every host on the farm. A near-vacuous
+# rule that looks like a boundary is worse than no rule, because it stops
+# anyone from asking the question.
+#
+# Set LAB_CIDR to the student VLAN first, then re-run: the same rule becomes
+# a real boundary with no other change.
 EOF
 
 if ! $APPLY; then
