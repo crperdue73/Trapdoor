@@ -36,13 +36,21 @@ services:
       - ./cowrie/etc/cowrie.cfg:/cowrie/cowrie-git/etc/cowrie.cfg:ro
       - ./cowrie/etc/userdb.txt:/cowrie/cowrie-git/etc/userdb.txt:ro
       - cowrie_var:/cowrie/cowrie-git/var
-    ports:
-      - "${LAB_BIND_IP:-0.0.0.0}:${COWRIE_SSH_PORT:-2222}:2222"
-      - "${LAB_BIND_IP:-0.0.0.0}:${COWRIE_TELNET_PORT:-2223}:2223"
+    # NO published ports, deliberately.
+    #
+    # Cowrie is the one container that must never sit on a routed network:
+    # it is the container an attacker actually gets a shell in. Publishing
+    # 2222 here forced it onto labnet, and labnet gave it a route to the LAN.
+    # The lab reaches it through the web container's network namespace
+    # instead (web publishes the SSH ports and forwards them here), so the
+    # decoy's ports are the only published ones and the interactive target
+    # stays on the internal network.
+    expose:
+      - "2222"
+      - "2223"
     tmpfs:
       - /tmp:size=64m
     networks:
-      - labnet
       - honeynet
 
   web:
@@ -70,6 +78,10 @@ services:
       - nginx_logs:/var/log/nginx
     ports:
       - "${LAB_BIND_IP:-0.0.0.0}:${WEB_PORT:-8080}:80"
+      # ssh + telnet to cowrie, forwarded rather than published on cowrie
+      # itself. Publishing is what dragged cowrie onto labnet.
+      - "${LAB_BIND_IP:-0.0.0.0}:${COWRIE_SSH_PORT:-2222}:2222"
+      - "${LAB_BIND_IP:-0.0.0.0}:${COWRIE_TELNET_PORT:-2223}:2223"
     networks:
       - labnet
       - honeynet
@@ -134,9 +146,25 @@ networks:
   #   honeynet - internal, as before. Carries container-to-container traffic
   #              and is the reason a compromised decoy has no route out.
   #
-  # The honeypot is attached to both. It can be reached from the lab; it
-  # cannot reach the lab or the internet. Publishing a port does not open an
-  # egress path - the default route still goes to honeynet, which has none.
+  # The honeypot is attached to both. It can be reached from the lab.
+  #
+  # CORRECTION, and it cost a deployment to learn: "publishing a port does not
+  # open an egress path" was WRONG. I wrote it in a commit message and then
+  # wrote a check that could not run, so nothing ever contradicted me. When
+  # the check was finally made to run it reported:
+  #
+  #   FAIL  cowrie REACHED the LAN - internal:true is not in effect
+  #
+  # It reached it through labnet. A multi-homed container picks a default
+  # route by interface order, and Docker attaches the non-internal network
+  # with the lower metric. So the moment cowrie joined labnet to make its
+  # port publishable, it gained a way out. Inbound and egress are the same
+  # pipe once the container sits on a routed network.
+  #
+  # The port only needs to exist on the DECOY, which is a static nginx that
+  # does not take instructions. Cowrie's SSH listener needs no published port
+  # at all: the lab reaches it through the web container's network, and it
+  # stays on the internal network where it belongs.
   labnet:
     driver: bridge
   honeynet:

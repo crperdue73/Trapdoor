@@ -125,12 +125,44 @@ echo "4. pipeline producing events"
 if [[ ! -s out/events.jsonl ]]; then
     skip "event pipeline — out/events.jsonl is empty, nothing has proven it works"
 else
-    total=$(wc -l < out/events.jsonl)
-    sensors=$(jq -r '.sensor' out/events.jsonl 2>/dev/null | sort -u | tr '\n' ' ')
-    ok "${total} events, sensors seen: ${sensors}"
-    # A schema drift would show up here as unparseable lines.
-    badlines=$(jq -c . out/events.jsonl 2>/dev/null | grep -c . || echo 0)
-    [[ "$badlines" == "$total" ]] || bad "some lines are not valid JSON (${badlines}/${total})"
+    # Parsed with python3, not jq: jq is not installed on the lab host and a
+    # check whose tool is missing reports the stack as broken when it is the
+    # checker that is broken. The parser name is printed so a future reader
+    # can tell which path ran.
+    if command -v python3 >/dev/null 2>&1; then
+        parse_out=$(python3 - "${PWD}/out/events.jsonl" <<'PYEOF' 2>&1
+import json, sys, collections
+total = bad = 0
+sensors = collections.Counter()
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line:
+        continue
+    total += 1
+    try:
+        sensors[json.loads(line).get("sensor")] += 1
+    except Exception:
+        bad += 1
+print(f"{total} {bad} {' '.join(f'{k}={v}' for k, v in sorted(sensors.items()))}")
+PYEOF
+)
+        read -r total badlines sensor_list <<< "$parse_out"
+        ok "${total} events (python3 parser), sensors: ${sensor_list:-none}"
+        for want in cowrie nginx; do
+            if [[ "$sensor_list" == *"${want}="* ]]; then
+                ok "sensor present: ${want}"
+            else
+                skip "sensor MISSING from events: ${want}"
+            fi
+        done
+        if [[ "${badlines:-0}" -eq 0 ]]; then
+            ok "every event line is valid JSON"
+        else
+            bad "${badlines}/${total} event lines are not valid JSON"
+        fi
+    else
+        skip "event JSON check — NO PARSER (python3 absent), not run"
+    fi
 fi
 
 # C7 as a platform check rather than only a scenario claim. This is the one
@@ -154,10 +186,16 @@ fi
 # only failed when a real session started - so they get checked against the
 # image instead of being remembered.
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    for cfg_path in $(grep -oE '/cowrie/[A-Za-z0-9_./-]+\.(pickle|txt|json|cfg)' \
+    # Only data files, and only ones the image is supposed to provide.
+    # userdb.txt is OUR mounted file, not the image's: checking the image for
+    # it asked the wrong question and reported a false MISSING.
+    for cfg_path in $(grep -oE '/cowrie/[A-Za-z0-9_./-]+\.pickle' \
             cowrie/etc/cowrie.cfg 2>/dev/null | sort -u); do
-        if docker run --rm --entrypoint /bin/sh "$(docker compose config 2>/dev/null | \
-                awk '/image:/{print $2; exit}')" -c "test -f ${cfg_path}" 2>/dev/null; then
+        # The cowrie image has no sh, so the probe runs python3. Falls back
+        # to a clear NOT RUN rather than a false MISSING.
+        if docker exec trapdoor-cowrie python3 -c \
+                "import sys; sys.exit(0 if __import__('os').path.isfile('${cfg_path}') else 1)" \
+                2>/dev/null; then
             ok "cowrie image has ${cfg_path}"
         else
             skip "cowrie image is MISSING ${cfg_path} (every session will fail)"
@@ -274,10 +312,40 @@ if ! command -v docker >/dev/null 2>&1; then
     skip "egress check — docker is not installed"
 elif ! docker compose ps --status running --format '{{.Service}}' 2>/dev/null | grep -qx cowrie; then
     skip "egress check — cowrie is not running"
-elif docker compose exec -T cowrie sh -c 'timeout 3 wget -q -O- http://192.168.0.1 >/dev/null 2>&1' 2>/dev/null; then
-    bad "cowrie reached the LAN — internal:true is not in effect"
 else
-    ok "cowrie cannot reach the LAN (internal network holding)"
+    # Distinguish three outcomes, because collapsing them is how a check
+    # certifies nothing:
+    #   0            -> the container REACHED the LAN, containment broken
+    #   1 (from py)  -> the connection was refused/unreachable, containment holds
+    #   anything else-> the probe itself did not run
+    #
+    # The previous version ran `sh -c` and treated every non-zero exit as
+    # success. The cowrie image has no sh, so the probe never ran, the failed
+    # exec exited non-zero, and the check printed OK. It certified containment
+    # by failing to look. That is the exact bug I had written a comment about
+    # four lines above it.
+    probe_script='
+import socket, sys
+try:
+    s = socket.create_connection(("192.168.0.1", 80), timeout=3)
+    s.close()
+    sys.exit(0)          # CONNECTED - containment is broken
+except OSError:
+    sys.exit(1)          # refused or no route - containment holds
+'
+    docker compose exec -T cowrie python3 -c "$probe_script" >/dev/null 2>&1
+    rc=$?
+    if ! docker compose ps --status running --format '{{.Service}}' 2>/dev/null | grep -qx cowrie; then
+        skip "egress check — cowrie went away mid-check, not run"
+    elif docker compose exec -T cowrie python3 -c 'import sys; sys.exit(0)' >/dev/null 2>&1; then
+        case "$rc" in
+            0) bad "cowrie REACHED the LAN — internal:true is not in effect" ;;
+            1) ok "cowrie cannot reach the LAN (connection refused, internal network holding)" ;;
+            *) skip "egress check — probe exited ${rc}, NOT a verdict" ;;
+        esac
+    else
+        skip "egress check — cannot run python3 in the cowrie container, NOT RUN"
+    fi
 fi
 
 echo
