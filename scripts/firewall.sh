@@ -172,7 +172,34 @@ BACKUP="/root/iptables-backup-${STAMP}.rules"
 iptables-save > "$BACKUP"
 echo "rollback file: ${BACKUP}"
 
-RULE_ARGS=(-p tcp -m multiport --dports "${COWRIE_SSH_PORT},${COWRIE_TELNET_PORT},${WEB_PORT}" ! -s "$LAB_CIDR" -j DROP)
+# The rule has to allow the host itself, not just LAB_CIDR.
+#
+# Traffic from this host to its own published ports is hairpinned through
+# POSTROUTING, so its source is rewritten to the bridge address (measured:
+# 172.22.0.1) — which is NOT inside 192.168.0.0/16. A rule written as
+# `! -s $LAB_CIDR -j DROP` therefore drops the host's own health check and
+# the verify banner probe. That is exactly what happened on .45: verify went
+# from green to "no SSH banner on port 2222", and removing this rule restored
+# it instantly.
+#
+# So the rule accepts the lab AND every local Docker bridge, then drops.
+BRIDGES=$(ip -4 -o addr show 2>/dev/null | awk '$2 ~ /^(br-|docker0)/ {split($4,a,"/"); print a[1]}' | paste -sd' ')
+
+SOURCE_MATCH=(! -s "$LAB_CIDR")
+for b in $BRIDGES; do
+    SOURCE_MATCH+=(! -s "$b")
+done
+
+if [[ -z "$BRIDGES" ]]; then
+    echo "REFUSING: cannot enumerate Docker bridge addresses, so a source-" >&2
+    echo "          based rule would drop the host's own health check. Fix the" >&2
+    echo "          enumeration or do not use --apply on this host." >&2
+    exit 1
+fi
+
+echo "allowing sources: ${LAB_CIDR} plus local bridges: ${BRIDGES}"
+
+RULE_ARGS=(-p tcp -m multiport --dports "${COWRIE_SSH_PORT},${COWRIE_TELNET_PORT},${WEB_PORT}" "${SOURCE_MATCH[@]}" -j DROP)
 
 # Refuse to stack duplicates. `iptables -I` on every run is how a chain grows
 # to two hundred identical lines over a year and nobody notices until a
@@ -218,6 +245,19 @@ if curl -s -o /dev/null --max-time 5 "http://${LAB_BIND_IP}:${WEB_PORT}/"; then
 else
     echo "  FAIL health-check path broke — this is the exact failure the old" >&2
     echo "       INPUT DROP caused. roll back: iptables-restore < ${BACKUP}" >&2
+    FAIL=1
+fi
+
+# The decoy must still speak SSH to the host. This is the check that would
+# have caught the rule above: an earlier version passed the HTTP probe and
+# the health path, then quietly dropped every SSH packet from this host, and
+# verify went from green to "no SSH banner on port 2222".
+banner=$(timeout 5 nc "${LAB_BIND_IP}" "$COWRIE_SSH_PORT" </dev/null 2>/dev/null | head -1 || true)
+if [[ "$banner" == SSH-2.0-* ]]; then
+    echo "  OK   SSH banner still served from this host"
+else
+    echo "  FAIL SSH banner gone after apply (got '${banner}') — the rule is" >&2
+    echo "       dropping the host's own traffic. roll back: iptables-restore < ${BACKUP}" >&2
     FAIL=1
 fi
 
