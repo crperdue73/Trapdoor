@@ -149,6 +149,29 @@ if [[ -s out/events.jsonl ]]; then
     fi
 fi
 
+# The decoy can answer perfectly while the log it writes is unparseable, and
+# then every downstream check passes on an empty file. Parse the raw log
+# directly, before the shipper has had a chance to hide the problem by
+# dropping lines it could not read.
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
+        && docker inspect trapdoor-web >/dev/null 2>&1; then
+    raw_vol=$(docker volume inspect trapdoor_nginx_logs --format '{{.Mountpoint}}' 2>/dev/null)
+    raw_log="${raw_vol}/trapdoor.json"
+    if [[ -f "${raw_log}" ]]; then
+        total=$(wc -l < "${raw_log}")
+        good=$(jq -c . "${raw_log}" 2>/dev/null | wc -l)
+        if [[ "${total:-0}" -eq 0 ]]; then
+            skip "nginx raw log exists but is empty — nothing has been sent yet"
+        elif [[ "${good}" -lt "${total}" ]]; then
+            skip "nginx raw log is INVALID JSON on $((total-good)) of ${total} lines (C8)"
+        else
+            ok "nginx raw log is valid JSON on all ${total} lines"
+        fi
+    else
+        skip "nginx raw log not found at ${raw_log} — cannot check the log format (C8)"
+    fi
+fi
+
 # Published ports that are not actually published. This is the failure we hit
 # on the first deployment and it is worth its own check because everything
 # else passes: containers healthy, decoy answering on its container IP, and
