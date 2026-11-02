@@ -192,13 +192,31 @@ def nginx_to_event(raw: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def tail(path: Path) -> Iterator[dict[str, Any]]:
-    """Follow a JSONL file, yielding parsed objects. Survives truncation/rotation."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.touch(exist_ok=True)
+    """Follow a JSONL file, yielding parsed objects. Survives truncation/rotation.
+
+    Does NOT create the file. The log directory is mounted read-only on
+    purpose, so that a compromised or buggy shipper cannot rewrite the
+    evidence it is supposed to be recording. Creating a missing file was a
+    convenience that cost a working stack: it crashed the container on a
+    read-only mount before a single event landed.
+
+    A missing file is now waited on rather than made. The producer creates
+    its own log the first time it has something to say, and until then there
+    is genuinely nothing to follow.
+    """
     inode = None
     handle = None
     while True:
         try:
+            if not path.exists():
+                if inode is not None or handle is not None:
+                    LOG.warning("%s vanished (rotation or truncation); waiting", path)
+                    if handle:
+                        handle.close()
+                    handle = None
+                    inode = None
+                time.sleep(POLL_SECONDS)
+                continue
             st = path.stat()
             if inode != st.st_ino or handle is None:
                 if handle:

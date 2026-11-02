@@ -138,6 +138,32 @@ def test_nginx_status_missing_is_null_not_zero():
     assert ev["http_status"] is None, ev["http_status"]
 
 
+def test_tail_does_not_create_missing_file():
+    """The shipper must be able to follow a read-only log directory.
+
+    A container that cannot create its input is correct. A container that
+    insists on creating it crashes on a read-only mount and takes the whole
+    pipeline down before the first event - which is exactly what happened on
+    the first real deployment. This asserts tail() waits instead of writing.
+    """
+    import tempfile, threading, time
+    from pathlib import Path as _P
+
+    with tempfile.TemporaryDirectory() as d:
+        missing = _P(d) / "nope" / "cowrie.json"
+        stop = threading.Event()
+
+        def run():
+            for _ in shipper.tail(missing):
+                stop.set()
+
+        threading.Thread(target=run, daemon=True).start()
+        time.sleep(0.3)
+        stop.set()
+        assert not missing.exists(), "tail() created its input file; it must not"
+        assert not missing.parent.exists(), "tail() created the log directory; it must not"
+
+
 def test_nginx_session_groups_by_client():
     """Two requests from one client in the same second share a session id."""
     a = shipper.nginx_to_event({
