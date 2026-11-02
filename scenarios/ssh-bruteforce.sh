@@ -29,17 +29,90 @@ TARGET="${1:-${LAB_BIND_IP:-127.0.0.1}}"
 PORT="${2:-${COWRIE_SSH_PORT:-2222}}"
 
 # The fixed credential list. Same order every run, same lesson every time.
-# Deliberately includes one password from userdb.txt (root/toor) so the
-# scenario shows both a failure and a success in a single transcript —
-# students see the moment it breaks without needing two exercises.
+#
+# TWO THINGS THIS LIST HAS TO GET RIGHT, both learned the hard way:
+#
+# 1. It must contain rejected attempts BEFORE the accepted one. An earlier
+#    version had "root:123456" first — and 123456 IS in userdb.txt, so the
+#    scenario authenticated on attempt #1, printed ACCEPTED, and dropped into
+#    the shell. The lesson is "watch a brute force fail, fail, fail, then get
+#    in." It was showing one success and zero failures. The transcript looked
+#    fine and taught the opposite of the lesson.
+#
+# 2. Exactly one entry may be in userdb.txt. If nobody wrote this list down
+#    next to that file, the two drift apart and nobody notices, because a
+#    success where you expected a failure is not an error condition — it is
+#    just a different lesson.
+#
+# Claim 2 below therefore checks the list against userdb.txt before running
+# anything, and fails loudly if the shape is wrong.
 CREDS=(
-  "root:123456"
-  "root:password"
-  "admin:admin"
-  "admin:123456"
-  "ubuntu:ubuntu"
-  "root:toor"          # <- succeeds: present in cowrie/etc/userdb.txt
+  "root:password"     # expected: rejected
+  "admin:123456"      # expected: rejected
+  "root:guess123"     # expected: rejected
+  "admin:letmein"     # expected: rejected
+  "ubuntu:changeme"   # expected: rejected
+  "root:toor"         # expected: ACCEPTED (present in cowrie/etc/userdb.txt)
 )
+
+# --- claim 0: the list has the shape the lesson needs ----------------------
+# This is the guard that turns "the transcript looks fine" into a check.
+say "0. credential list matches the decoy's userdb"
+USERDB="${USERDB:-cowrie/etc/userdb.txt}"
+if [[ ! -f "$USERDB" ]]; then
+    echo "   FAIL: cannot read ${USERDB} — no way to know which attempts will" >&2
+    echo "   succeed, so the lesson cannot be trusted. Aborting." >&2
+    exit 1
+fi
+
+EXPECTED_FAIL=0
+EXPECTED_OK=0
+MISMATCH=0
+for cred in "${CREDS[@]}"; do
+    u="${cred%%:*}"; p="${cred#*:}"
+    if grep -qx "${u}:x:${p}" "$USERDB"; then
+        echo "   in userdb, will authenticate:  ${u}:${p}"
+        EXPECTED_OK=$((EXPECTED_OK + 1))
+    else
+        EXPECTED_FAIL=$((EXPECTED_FAIL + 1))
+    fi
+done
+echo "   ${EXPECTED_FAIL} expected failures, ${EXPECTED_OK} expected success"
+
+if [[ "$EXPECTED_OK" -eq 0 ]]; then
+    echo "   FAIL: every credential in this list is rejected — the scenario" >&2
+    echo "   would never reach the shell. Add one entry present in userdb." >&2
+    exit 1
+fi
+if [[ "$EXPECTED_OK" -gt 1 ]]; then
+    echo "   FAIL: ${EXPECTED_OK} credentials in this list will authenticate." >&2
+    echo "   The lesson is one break-in after several failures; more than one" >&2
+    echo "   success makes the transcript misleading." >&2
+    exit 1
+fi
+if [[ "$EXPECTED_FAIL" -eq 0 ]]; then
+    echo "   FAIL: no attempt will fail. A brute force that succeeds first try" >&2
+    echo "   is not a brute force and the lesson shows nothing." >&2
+    exit 1
+fi
+# The single success must be LAST, or the loop breaks before showing failures.
+last="${CREDS[${#CREDS[@]}-1]}"
+lu="${last%%:*}"; lp="${last#*:}"
+if ! grep -qx "${lu}:x:${lp}" "$USERDB"; then
+    echo "   FAIL: the last entry (${lu}) is not the one in userdb, but the" >&2
+    echo "   loop stops at the first success — so the failures after it are" >&2
+    echo "   never shown. Put the accepted credential last." >&2
+    exit 1
+fi
+for cred in "${CREDS[@]:0:${#CREDS[@]}-1}"; do
+    u="${cred%%:*}"; p="${cred#*:}"
+    if grep -qx "${u}:x:${p}" "$USERDB"; then
+        echo "   FAIL: ${u} authenticates but is not last in the list. The" >&2
+        echo "   scenario would stop here and skip the remaining attempts." >&2
+        exit 1
+    fi
+done
+echo "   OK: shape is correct"
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
