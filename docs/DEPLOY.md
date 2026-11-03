@@ -101,6 +101,40 @@ jq -c . /opt/trapdoor/out/events.jsonl | tail -5
 If step 4 shows `sensor: "nginx"` events with `http_path: "/.env"`, the whole
 pipeline is working end to end.
 
+## Disk {#disk}
+
+RAM is the number people ask about and disk is the number that bites them.
+Measured on `test-trapdoor` (2026-11-02), with the core stack up and idle,
+`out/events.jsonl` empty:
+
+```
+du -sh .verify out   ->   48K  .verify     4.0K  out
+df -h /              ->   40G total, 13G used, 25G free
+```
+
+The stack itself is small. The growth is all in two places, and only one of
+them is pruned:
+
+| What | Where | Grows? | Pruned by |
+|---|---|---|---|
+| Normalized events | `out/events.jsonl` | ~10–50 MB/day of class use | `RETENTION_DAYS` (whole files only) and `make clean` |
+| Uploaded artifacts | `cowrie_var` Docker volume | only when a scenario uploads | `make clean` (`down -v`); **not** by retention |
+| Container stdout logs | Docker `json-file` | capped at 10 MB × 3 per container | automatic rotation |
+| Verification artifacts | `.verify/*.txt` | a few small files/day | nothing — delete by hand |
+
+Budget **~10 GB free** for a laptop or a small LXC. That is `make clean`
+steady state plus headroom, not a hard limit. Two things to know before a
+semester-long run:
+
+1. **Retention cannot prune the file it is writing.** `shipper.prune()` only
+   unlinks `out/*.jsonl` whose mtime is older than the cutoff, and
+   `events.jsonl` is appended to continuously, so its mtime is always now.
+   The live file grows until you rotate it.
+2. **The one-file log is the only thing retention sees.** Set `RETENTION_DAYS`
+   to shorten the tail of *rotated* files; it will not shrink the active one.
+
+Check before a class: `du -sh out/ .verify/ && docker system df`.
+
 ## Firewall
 
 `make firewall` writes:

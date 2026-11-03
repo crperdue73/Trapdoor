@@ -52,9 +52,9 @@ tested is a network policy you do not have.
 | # | Claim | Evidence |
 |---|-------|----------|
 | B1 | An unauthenticated TCP connect to `:2222` returns an SSH banner | `nc` shows `SSH-2.0-...` |
-| B2 | A rejected credential is logged with its username | `cowrie.login.failed` with `username` populated |
-| B3 | An accepted credential is logged | `cowrie.login.success` for `root` |
-| B4 | Commands typed in the shell are logged individually | `cowrie.command.input` × 5 (`id`, `uname`, `cat`, `ls`, `echo`) |
+| B2 | A rejected credential is logged with its username | `event: auth_failed` with `username` populated (Cowrie logs it as `cowrie.login.failed`) |
+| B3 | An accepted credential is logged | `event: auth_success` for `root` (Cowrie: `cowrie.login.success`) |
+| B4 | Commands typed in the shell are logged individually | `event: command` × 5 in order (`id`, `uname`, `cat`, `ls`, `echo`) |
 | B5 | No command typed reaches the host | `scripts/containment-check.sh` exits 0 |
 | B6 | The run is identical each time | same event order, same usernames, same count |
 

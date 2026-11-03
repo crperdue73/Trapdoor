@@ -44,16 +44,28 @@ environment**.
 |---|---|
 | **Cowrie** | SSH + Telnet honeypot, emulated shell, captures uploads |
 | **nginx** | Web decoy — real server, real logs, scanner bait paths |
-| **Shipper** | Normalizes both sources into one JSONL schema — **required**; `make logs` follows it and nothing is normalized without it |
+| **Shipper** | Normalizes both sources into one JSONL schema — **core, not optional**. `make up` starts it, `make logs` follows its output, and `make sessions` reads only what it writes |
 | *(optional)* | OpenSearch + Dashboards via `compose.siem.yml` |
 
-Default footprint: ~2–4 GB RAM, and **plan on disk** — the core stack writes
-`out/events.jsonl` continuously and retention (default 14 days, `RETENTION_DAYS`)
-only deletes whole files older than the cutoff, so a file that is still being
-written is never pruned. A busy lab produces hundreds of MB a day; budget a few
-GB of free space before a class, and check `.verify/` and `out/` on a laptop that
-has been running for a month. The observability stack is opt-in so a laptop or a
-small LXC can run the core.
+Default footprint: **~2–4 GB RAM and ~10 GB free disk** for the core stack.
+`make clean` empties `out/`, so that 10 GB is the steady state, not the
+high-water mark of a long-running laptop.
+
+Where the disk goes: `out/events.jsonl` grows continuously at roughly **10–50
+MB/day** for a lab used a few hours a week (one event is ~300–400 bytes; a
+brute-force run is a few dozen events, a scan is a few hundred). Retention
+(default 14 days, `RETENTION_DAYS`) only deletes whole files older than the
+cutoff, so a file still being written is never pruned — and it only ever looks
+at `*.jsonl` in `out/`. Cowrie's uploaded artifacts live in the `cowrie_var`
+Docker volume, which retention does **not** touch; `make clean` removes it.
+
+A ceiling worth knowing: Docker's `json-file` driver caps each container's log
+at 10 MB × 3 files (set in `compose.yml`), so container logs cannot grow without
+bound. `.verify/` keeps a few small text files per day. If you leave the lab up
+for months, run `du -sh out/ .verify/` and `docker system df` before a class.
+
+See [`docs/DEPLOY.md`](docs/DEPLOY.md#disk) for the measured numbers and the
+host it was measured on.
 
 ## The event schema
 
@@ -85,7 +97,7 @@ page is a bug.
 |---|---|
 | `ts` | UTC, ISO 8601, milliseconds |
 | `sensor` | `cowrie` \| `nginx` — which honeypot produced it |
-| `event` | `connect` \| `disconnect` \| `auth_failed` \| `auth_success` \| `command` \| `upload` \| `download` \| `http_request` |
+| `event` | One of: `connect`, `disconnect`, `auth_failed`, `auth_success`, `command`, `upload`, `download`, `http_request`. These are *our* names, not Cowrie's — Cowrie writes `cowrie.login.failed`, the schema and every consumer see `auth_failed` |
 | `proto` | `ssh` \| `telnet` \| `http` |
 | `src_ip` / `src_port` | Who knocked |
 | `session_id` | Ties events into one attacker transcript |
@@ -106,15 +118,25 @@ make up-siem                   # optional: add OpenSearch + dashboards
 Then:
 
 ```bash
+make scenario                      # no SCENARIO: lists the ones you have
 make scenario SCENARIO=ssh-bruteforce   # scripted attack, tagged with a scenario id
 make sessions                         # list sessions with event counts
 make sessions SESSION=a1b2c3          # render one session as a transcript
 ```
 
-### What the transcript looks like
+### What the output looks like
 
-Real output of `make sessions SESSION=a1b2c3` against one brute-force run.
-Ten events, one attacker, one page:
+Real output of `make sessions` after one brute-force run and one web scan —
+session id, sensor, event count, first event time:
+
+```
+session        sensor   events  first_seen
+9f3c1e08a74b   cowrie       10  2026-11-01T22:04:09.000Z
+b17d44c20e9a   nginx         5  2026-11-01T22:05:31.000Z
+```
+
+Real output of `make sessions SESSION=9f3c1e08a74b`. Ten events, one attacker,
+one page:
 
 ```
 ts                       event          proto detail
@@ -140,11 +162,15 @@ These are teaching material, not just hygiene:
 
 - **No execution path from a captured payload.** The shipper records a hash
   and a byte count; the payload bytes themselves never enter the event log.
-  Cowrie's own container volume (`cowrie_var`, mounted read-only into the
-  shipper at `/in/cowrie`) *does* retain what was uploaded, inside the
-  honeypot container's storage — it is inert, nothing runs it, and `make clean`
-  removes it with the volume. If you want a shorter tail, set
-  `RETENTION_DAYS` and prune that volume between classes.
+  To be precise, because the two halves are easy to conflate: the **event log**
+  never contains payload bytes, only a hash and a size. Cowrie's own container
+  volume (`cowrie_var`, mounted read-only into the shipper at `/in/cowrie`)
+  **does** retain the uploaded files themselves, inside the honeypot
+  container's storage, outside the log. That copy is inert — nothing executes
+  it, nothing serves it, and no container has a mount from that volume that can
+  run anything. `make clean` removes it with the volume; `RETENTION_DAYS` does
+  not prune it (retention only deletes `*.jsonl` files in `out/`). If you want
+  a shorter tail, prune that volume between classes.
 - **Egress is locked down** on the honeypot containers. A compromised honeypot
   must not become a pivot.
 - **Retention is short and explicit.** Honeypot data grows fast and is mostly

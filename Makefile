@@ -65,7 +65,7 @@ events:
 sessions:
 	@test -f out/events.jsonl || { echo "no events yet — run a scenario first"; exit 0; }
 	@if [ -z "$(SESSION)" ]; then \
-	  printf '%-14s %-8s %6s  %s\n' session sensor events "first seen"; \
+	  printf '%-14s %-8s %6s  %s\n' session sensor events "first_seen"; \
 	  jq -r '[.session_id, .sensor, .ts] | @tsv' out/events.jsonl \
 	    | sort \
 	    | awk -F'\t' '{n[$$1 SUBSEP $$2]++; if (!(($$1 SUBSEP $$2) in f)) f[$$1 SUBSEP $$2]=$$3} \
@@ -79,8 +79,9 @@ sessions:
 # The scenario name is data, so it is also checked before it is executed:
 # `make scenario SCENARIO=nmap; rm -rf /` must not be a way to run anything.
 scenario:
-	@test -n "$(SCENARIO)" || { echo "which one? SCENARIO=<name>"; \
-	  for s in $(SCENARIOS); do echo "  $$s"; done; exit 1; }
+	@! test -z "$(SCENARIO)" || { echo "which one? SCENARIO=<name>"; \
+	  for s in $(SCENARIOS); do echo "  $$s"; done; \
+	  echo; echo "  usage: make scenario SCENARIO=<name>"; false; }
 	@case " $(SCENARIOS) " in \
 	  *" $(SCENARIO) "*) ;; \
 	  *) echo "unknown scenario: $(SCENARIO)"; \
@@ -95,6 +96,7 @@ firewall:
 
 test:
 	@python3 tests/test_shipper.py
+	@python3 tests/test_docs.py
 
 # --- verification ---------------------------------------------------------
 
