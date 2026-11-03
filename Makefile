@@ -6,9 +6,14 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
 
-.PHONY: help up down restart logs ps events sessions scenario/ssh-bruteforce \
-        scenario/web-scan scenario/nmap firewall test clean \
-        verify deploy drift health timer-install timer-remove
+# Scenario names are plain words passed as SCENARIO=<name>, not baked into
+# target names. `scenario/ssh-bruteforce` worked, but a slash in a target is
+# read as a path by anyone who has written a Makefile, it tab-completes badly,
+# and `make help` could not list the scenarios it supported.
+SCENARIOS := ssh-bruteforce web-scan nmap
+
+.PHONY: help up down restart logs ps events sessions scenario firewall test \
+        clean verify deploy drift health timer-install timer-remove
 
 help:
 	@echo "TRAPDOOR — internal honeypot lab"
@@ -19,9 +24,9 @@ help:
 	@echo "  make ps                      container status"
 	@echo "  make events                  pretty-print normalized events"
 	@echo "  make sessions                list sessions with event counts"
-	@echo "  make scenario/ssh-bruteforce run the SSH brute-force lesson"
-	@echo "  make scenario/web-scan       run the web scanner lesson"
-	@echo "  make scenario/nmap           run the port sweep lesson"
+	@echo "  make sessions SESSION=<id>   render one session end to end"
+	@echo "  make scenario SCENARIO=<n>   run a scripted attack. n ="
+	@for s in $(SCENARIOS); do echo "                                 - $$s"; done
 	@echo "  make firewall                print the iptables rules for review"
 	@echo "  make verify                  run verify.sh (is this deployment correct?)"
 	@echo "  make drift                   compare running tree to origin (is it the repo?)"
@@ -54,20 +59,34 @@ events:
 	@test -f out/events.jsonl || { echo "no events yet — run a scenario first"; exit 0; }
 	@tail -n 40 out/events.jsonl | jq -c .
 
+# No SESSION -> the index. With SESSION -> the transcript for that one
+# session, in time order, which is the thing an instructor actually puts on
+# a projector. Both read the same file so they can never disagree.
 sessions:
 	@test -f out/events.jsonl || { echo "no events yet — run a scenario first"; exit 0; }
-	@echo "session        sensor   events  first seen"
-	@jq -r '[.session_id, .sensor] | @tsv' out/events.jsonl 2>/dev/null \
-	  | sort | uniq -c | sort -rn | head -20
+	@if [ -z "$(SESSION)" ]; then \
+	  printf '%-14s %-8s %6s  %s\n' session sensor events "first seen"; \
+	  jq -r '[.session_id, .sensor, .ts] | @tsv' out/events.jsonl \
+	    | sort \
+	    | awk -F'\t' '{n[$$1 SUBSEP $$2]++; if (!(($$1 SUBSEP $$2) in f)) f[$$1 SUBSEP $$2]=$$3} \
+	        END {for (k in n) {split(k,p,SUBSEP); print p[1]"\t"p[2]"\t"n[k]"\t"f[k]}}' \
+	    | sort -k1,1 -k4,4r \
+	    | awk -F'\t' '{printf "%-14s %-8s %6d  %s\n", $$1, $$2, $$3, $$4}'; \
+	else \
+	  python3 scripts/render_session.py out/events.jsonl "$(SESSION)"; \
+	fi
 
-scenario/ssh-bruteforce:
-	@./scenarios/ssh-bruteforce.sh
-
-scenario/web-scan:
-	@./scenarios/web-scan.sh
-
-scenario/nmap:
-	@./scenarios/nmap.sh
+# The scenario name is data, so it is also checked before it is executed:
+# `make scenario SCENARIO=nmap; rm -rf /` must not be a way to run anything.
+scenario:
+	@test -n "$(SCENARIO)" || { echo "which one? SCENARIO=<name>"; \
+	  for s in $(SCENARIOS); do echo "  $$s"; done; exit 1; }
+	@case " $(SCENARIOS) " in \
+	  *" $(SCENARIO) "*) ;; \
+	  *) echo "unknown scenario: $(SCENARIO)"; \
+	     echo "known: $(SCENARIOS)"; exit 1 ;; \
+	esac
+	@./scenarios/$(SCENARIO).sh
 
 # Printed, never applied automatically. A honeypot that rewrites the host
 # firewall on `make up` is a surprise nobody wants at 2am.

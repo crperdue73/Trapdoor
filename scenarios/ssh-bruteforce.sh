@@ -208,17 +208,25 @@ else
 fi
 
 # --- claim 5: what to look for in the events ------------------------------
+# This used to tell the student to select .event_type, which is Cowrie's field
+# name, not ours — the shipper emits .event. The hint would have printed a
+# column of nulls after a successful run and the student would have concluded
+# the pipeline was broken. Checked against out/events.jsonl, not against memory.
 say "4. what to check in out/events.jsonl"
 cat <<'HINT'
-   jq -r 'select(.sensor=="cowrie") | [.ts, .event_type, .username] | @tsv' \
+   jq -r 'select(.sensor=="cowrie") | [.ts, .event, .username] | @tsv' \
       out/events.jsonl | tail -20
 
    Expect, in order:
-     cowrie.session.connect
-     cowrie.login.failed      (one per rejected pair)
-     cowrie.login.success     (once)
-     cowrie.command.input     (id, uname, cat, ls, echo)
-     cowrie.session.closed
+     connect
+     auth_failed          (one per rejected pair)
+     auth_success         (once)
+     command              (id, uname, cat, ls, echo)
+     disconnect
+
+   Or let the repo render it for you:
+     make sessions                       # list sessions
+     make sessions SESSION=<id>          # the transcript, in order
 HINT
 
 say "done"
