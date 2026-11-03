@@ -138,3 +138,186 @@ genuinely-empty case. Verified both directions on the live box: on a stopped
 stack it now reports `NOT RUN — 3 ports declared, NONE listening`, and on a
 running stack it reports `OK — all 3 declared ports are published and
 listening`. The negative test mattered more than the positive one.
+
+---
+
+# Proposal — retention that can actually delete, and an exemption with a number on it
+
+**Status: proposed, not implemented.** Written 2026-11-03 for review before
+`shipper/shipper.py` is touched. Nothing below describes code that exists yet.
+Everything above this line does.
+
+## The finding this comes from
+
+`shipper.prune()` unlinks whole `*.jsonl` files in `OUT_DIR` whose mtime is
+older than `RETENTION_DAYS`. `out/events.jsonl` is appended to continuously, so
+its mtime is always now, so retention can never delete it. The file that grows
+is the only file retention cannot see.
+
+This was found by writing the disk footprint sentence down and then testing it.
+The README had implied retention kept a runaway event log in check. It does not.
+Every other claim in this repo has a check behind it; this one had a paragraph.
+
+Two separate gaps fall out of that:
+
+1. **The event log needs rotation**, so `prune()` has whole files to act on.
+2. **`cowrie_var` was exempt by omission** — `prune()` globs `*.jsonl` and has
+   never known the volume exists. An omission that reads like a policy is worse
+   than either decision.
+
+---
+
+## Decision 1 — rotate the event log, on size, inside the shipper
+
+**Rotation on a size boundary (`ROTATE_MB`, default 50), performed by the
+shipper itself. Not by `logrotate`, not on a timer, not by day.**
+
+The reasoning, in the order it matters:
+
+- **Retention is already shaped for this.** `prune()` deletes whole files. The
+  fix is to give it files, not to teach it partial deletes. A prune that
+  rewrites the live file has to read and rewrite the whole thing on the same box
+  the lab runs on, corrupts the only copy of the events if it dies mid-write,
+  and cannot be explained to a student. A student can look at
+  `events-2026-11-03T142211Z.jsonl` and know what it is.
+- **Size, not time.** A class day is exactly when the file grows. A day
+  boundary fires at an arbitrary moment and will eventually fire mid-scenario,
+  splitting one session's transcript across two files for no reason. 50 MB is
+  roughly a month of ordinary lab use, so rotation is rare and unremarkable.
+- **Inside the shipper, because the shipper owns the offset table.** This is the
+  part that makes it safe. `tail()` stores resume positions in the module-level
+  `_OFFSETS` dict keyed by path and detects a swapped file via `st_ino`.
+  Any *external* rotator renaming files under a running shipper produces the
+  exact failure below, on a timer, with nobody watching. Rotation and the offset
+  reset must be the same operation or they will eventually disagree.
+
+### The failure mode rotation introduces, stated up front
+
+`tail()` reopens on a new inode at the old byte offset. The guard
+`if start > st.st_size: start = 0` means **no data is lost** — but it also means
+the new file is re-read from byte zero and its first events are written a second
+time. For a class that sees a session count double, and the lesson they take
+away is "the pipeline is broken."
+
+So: **rotate by rename-then-create, and reset `_OFFSETS[path]` for that path in
+the same function that creates the new file.** One code path owns both halves.
+
+`copytruncate` is rejected: it truncates to zero, which hits the same
+`start > st_size` branch, and it drops everything written between the copy and
+the truncate.
+
+### What has to be true before this ships
+
+- [ ] `ROTATE_MB` (default 50) and `ROTATE_KEEP` / retention interaction:
+      rotated files must be named so `prune()` sees them as old-and-whole, and
+      the newest rotated file must not be pruned while `events.jsonl` is empty.
+- [ ] **Test: ten events stay ten across a rotation.** Push ten events through
+      the normalizer with a rotation forced in the middle (set `ROTATE_MB` tiny
+      in the test), read every `out/events*.jsonl` in ts order, assert exactly
+      ten events and no duplicates. This is the test Robbie asked for and it is
+      the acceptance criterion for the whole change.
+- [ ] A rotation is logged at INFO with the file it moved to.
+- [ ] `make clean` still removes rotated files (`rm -f out/*.jsonl` already globs).
+
+### Every reader, or the pipeline is right and the transcript is wrong
+
+Rotation is worthless if the readers keep reading one file. Currently
+hardcoded to `out/events.jsonl`:
+
+| Reader | Where |
+|---|---|
+| `make events` | `Makefile` |
+| `make sessions` (index and transcript) | `Makefile` |
+| `render_session.py` | argv path |
+| `verify.sh` | three places (pipeline check, nginx count, missing-status count) |
+| `ssh-bruteforce.sh` | scenario hint block |
+| `web-scan.sh` | scenario hint block, three jq calls |
+
+All of them move to **`out/events*.jsonl` in timestamp order**. Two traps:
+
+- Shell glob order is lexicographic, which only matches time order because the
+  stamp is `YYYYmmddTHHMMSSZ` — so the rotated names must be sortable that way,
+  or the glob has to be sorted explicitly. `events.jsonl` sorts *before*
+  `events-…` lexicographically but is the *newest*; it must be concatenated
+  last, not by glob.
+- `render_session.py` reading only the current file is the exact failure Robbie
+  named: a transcript showing three of ten events and nobody told. It needs the
+  same multi-file read as the Makefile, and the test in the next section proves
+  it.
+
+### Test: the transcript survives a rotation
+
+- [ ] Build a fixture with a session split across `events-<stamp>.jsonl` and
+      `events.jsonl`, run `render_session.py`, assert the full transcript in
+      order. Run the same fixture through the `make sessions` index and assert
+      the session count is unchanged.
+- [ ] Run the docs check (`tests/test_docs.py`) against the samples, since the
+      README shows this output.
+
+---
+
+## Decision 2 — `cowrie_var` is exempt on purpose, and it gets a number
+
+**Exempt from retention, deliberately, because it is not telemetry — it is the
+artifact store.** Recorded here so the next person finds a decision instead of
+an absence.
+
+Why exemption is right:
+
+- **Pruning it on a timer deletes the thing the lesson is about.** Cowrie's
+  upload capture is the evidence that a payload arrived and what it was. A
+  student re-reading a session days later should still be able to hash-match
+  what is on disk. These files are rare by construction — only when a scenario
+  uploads — so they are not the noise retention exists to bound.
+- **The risk is already contained by design.** Nothing executes from that
+  volume, nothing serves it, and its only mount is read-only into the shipper at
+  `/in/cowrie`.
+
+The price, stated in the same breath: **it grows until `make clean`.** An
+unbounded exemption that nobody measures is how a laptop user finds out the hard
+way on a Tuesday, which is the same argument that produced the disk figure in
+the README.
+
+So the exemption ships with a visible bound:
+
+- [ ] `make health` reports the `cowrie_var` volume size in every report
+      (`docker system df -v`, volume row, or a one-line `du` via a throwaway
+      container). Weekly on the record beats discovered in a class.
+- [ ] `docs/DEPLOY.md#disk` gains the same number and the sentence "exempt from
+      retention on purpose; `make clean` is the only thing that removes it."
+- [ ] `make health` reports a NOT RUN verdict, not a skip, if the volume size
+      cannot be determined — same rule as every other check in this repo.
+
+### The alternative, for Robbie to decide
+
+**Keep the last N artifacts (say 20) instead of unbounded.** Arguments each way:
+
+- *For:* a hard ceiling on a hostile file sitting on a disk, which is the one
+  risk the volume actually carries. Pruning by count is cheap and does not need
+  a size measurement to be useful.
+- *Against:* it is a policy about evidence, and evidence deleted by a counter is
+  evidence the instructor did not choose to delete. It also deletes in the order
+  files were written, which correlates with *when* rather than *worth* — the
+  interesting upload is as likely to be the 21st as the 1st.
+- *My read:* exempt-plus-measured first, because it is reversible and it makes
+  the number visible. If the measured number ever surprises us, keep-last-N
+  becomes an obvious next step with data behind it. I would not start there.
+
+Robbie decides from this text. Either way it goes in this file as a stated
+decision with the reason, and the bound gets a number.
+
+---
+
+## Scope and sequencing
+
+| # | Change | Touches |
+|---|---|---|
+| 1 | Rotation in `shipper.py` + rotation test | `shipper/shipper.py`, `tests/` |
+| 2 | Readers glob `out/events*.jsonl` + transcript-across-rotation test | `Makefile`, `scripts/render_session.py`, `scripts/verify.sh`, `scenarios/*.sh`, `tests/` |
+| 3 | `cowrie_var` size in `make health` | `scripts/health-check.sh` |
+| 4 | Docs: DEPLOY disk section, README footprint, this file | `docs/`, `README.md` |
+
+Each is its own commit. 1 and 2 are not separable in practice — rotating without
+updating the readers makes the transcript wrong, which is the failure mode this
+whole round is about — so 2 lands with 1 or immediately after it, and neither
+ships without its test.
