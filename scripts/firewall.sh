@@ -112,8 +112,8 @@ fi
 
 if [[ "$LAB_CIDR" == "192.168.0.0/16" ]]; then
     CIDR_NOTE="the WHOLE FARM. Every LXC, every agent host, every management
-#    interface on the /16 can reach the decoy. That is fine for a teaching lab.
-#    It is not a boundary. Narrow LAB_CIDR to the student VLAN to get one."
+# interface on the /16 can reach the decoy. That is fine for a teaching lab.
+# It is not a boundary. Narrow LAB_CIDR to the student VLAN to get one."
 else
     CIDR_NOTE="${LAB_CIDR}"
 fi
@@ -138,13 +138,28 @@ cat <<EOF
 # belongs in DOCKER-USER, which Docker evaluates before its own FORWARD rules
 # and which nothing else here appends to:
 #
-#   iptables -I DOCKER-USER -p tcp -m multiport \\
-#       --dports ${COWRIE_SSH_PORT},${COWRIE_TELNET_PORT},${WEB_PORT} \\
-#       ! -s ${LAB_CIDR} -j DROP
+#   iptables -I DOCKER-USER -p tcp -m multiport
+#       --dports 2222,2223,8080 -j DROP
+#       ! -s 192.168.0.0/16
+#
+# The ports and the source are written as literals above, on purpose. This
+# block lives inside the UNQUOTED heredoc that produces the report, so bash
+# expands dollar-brace expressions and collapses backslashes and backticks in
+# it before the text is ever printed. On 2026-11-06 an earlier version of this
+# comment carried doubled backslashes and a literal angle-bracket placeholder
+# for the bridge address. Inside the unquoted heredoc that became a live
+# command substitution: bash executed it, wrote a syntax error to stderr, and
+# the report printed a rule line with the source match silently deleted. The
+# report is the artifact a human reads before running --apply; it showed a
+# rule shaped differently from the one the script builds.
+#
+# The fix is not more escaping. Comment text inside an unquoted heredoc is
+# still shell syntax. Keep it prose: no backticks, no backslash continuations,
+# no dollar-brace, no angle brackets in pairs.
 #
 # That form is correct and reachable (DOCKER-USER counted 12 pkts from one
 # off-box request), but note iptables accepts only ONE --source per rule; a
-# second `! -s <bridge>` is rejected with "multiple --source options not
+# second negative --source is rejected with "multiple --source options not
 # allowed". To allow the lab AND the host's own hairpinned traffic (whose
 # source is the bridge address, measured 172.22.0.1, not inside LAB_CIDR)
 # AND drop the rest, express it as ACCEPT-per-source followed by a DROP.
