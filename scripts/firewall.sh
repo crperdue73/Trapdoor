@@ -222,8 +222,8 @@ PORTS="${COWRIE_SSH_PORT},${COWRIE_TELNET_PORT},${WEB_PORT}"
 # vacuous, so it must fail loudly rather than write a rule that matches air.
 if ! DESTS=$(docker ps --format '{{.Names}}' 2>/dev/null \
         | while read -r c; do
-            docker port "$c" 2>/dev/null | awk -F' -> ' '{print $2}'
-          done | sort -u | paste -sd' '); then
+            docker port "$c" 2>/dev/null
+          done | sort -u); then
     DESTS=""
 fi
 
@@ -271,14 +271,18 @@ echo "allowing sources: ${LAB_CIDR} plus local bridges: ${BRIDGES}"
 # `docker port` prints "addr:port"; split it so each part lands in the right
 # iptables field -- putting a combined addr:port into --dport is rejected.
 SPECS=()
-for dest in $DESTS; do
+while read -r line; do
+    [[ -z "$line" ]] && continue
+    # docker port prints "172.22.0.2:80" (or "[::]:80"); keep only v4 forms.
+    dest="${line#* -> }"
+    [[ "$dest" == \[* ]] && continue
     dhost="${dest%:*}"
     dport="${dest##*:}"
     for src in "$LAB_CIDR" $BRIDGES; do
         SPECS+=("-p tcp -d ${dhost} --dport ${dport} -s ${src} -m comment --comment TRAPDOOR-scope -j ACCEPT")
     done
     SPECS+=("-p tcp -d ${dhost} --dport ${dport} -m comment --comment TRAPDOOR-scope -j DROP")
-done
+done <<< "$DESTS"
 
 # Clear any previous version of this ruleset so re-runs are convergent rather
 # than additive. Only touches rules on exactly these three ports.
