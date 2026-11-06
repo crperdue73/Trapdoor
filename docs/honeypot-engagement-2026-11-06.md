@@ -110,6 +110,9 @@ Order matters: boundary first, proven, then scripts.
    - test host → **wrong port** on the decoy host must fail (separates "nothing listening" from
      "something enforcing")
 3. Each denial logged, attributable, timestamped on the enforcing device. **Silence voids the test.**
+   Written criterion (June, adopted verbatim): *a boundary is proven only when all three negative tests
+   produce attributable, timestamped denials. Silence voids the test — it does not pass it. Two denials
+   and one silence is not "mostly contained," it is unproven, and it gets re-run.*
 4. Attacker scripts assert hostname and source IP in their first lines and exit 1 otherwise. No nested
    heredoc inside an `ssh` string — files `scp`'d or piped over stdin.
 
