@@ -288,9 +288,20 @@ while read -r rule; do
     iptables -D DOCKER-USER $rule 2>/dev/null || true
 done < <(iptables -S DOCKER-USER | grep -- 'TRAPDOOR-scope' | sed 's/^-A DOCKER-USER //' || true)
 
-for spec in "${SPECS[@]}"; do
+# Rules are INSERTED, not appended, and this is not a style choice.
+#
+# Docker creates DOCKER-USER with a bare RETURN as its first rule. Appending
+# puts every TRAPDOOR rule underneath that RETURN, where it is unreachable:
+# the chain exits before reaching it. Measured on .45, 2026-11-06 -- fifteen
+# rules applied, all present, no duplicates, chain ends in DROP, decoy
+# answering, and the top RETURN counters climbing while every TRAPDOOR rule
+# sat at 0. The set looked complete and enforced nothing.
+#
+# SPECS is already in reading order, so inserting each at position 1 in
+# reverse yields the intended order with the DROPs last.
+for ((i = ${#SPECS[@]} - 1; i >= 0; i--)); do
     # shellcheck disable=SC2086
-    iptables -A DOCKER-USER $spec
+    iptables -I DOCKER-USER 1 ${SPECS[$i]}
 done
 echo "wrote $((${#SPECS[@]})) rules to DOCKER-USER"
 
