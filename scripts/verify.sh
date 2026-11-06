@@ -388,6 +388,30 @@ else
         ok "ufw is present: ${UFW_STATE#Status: }"
     fi
 
+    # A rule that is present is not a rule that matches.
+    #
+    # On 2026-11-06 this chain held fifteen well-formed rules, no duplicates,
+    # terminating in a DROP, with the decoy answering -- and every counter at
+    # zero, because the rules sat below Docker's own RETURN and matched the
+    # published port instead of the post-DNAT container destination. This
+    # check would have printed OK throughout. Presence is the only thing the
+    # old form tested, and presence was wrong four times in one day.
+    #
+    # So: if rules are present, at least one of them must have matched
+    # traffic. A counter above zero means the chain is in the packet path. It
+    # does not prove the scope is right, and it is not a substitute for the
+    # deny test -- but it is the cheapest way to tell enforcement from
+    # decoration.
+    if [[ "$TRAPDOOR_RULES" -gt 0 ]]; then
+        MATCHED=$(iptables -L DOCKER-USER -v -n 2>/dev/null \
+            | grep 'TRAPDOOR-scope' | awk '$1 ~ /^[0-9]+$/ && $1 > 0' | wc -l || true)
+        if [[ "$MATCHED" -gt 0 ]]; then
+            ok "$MATCHED TRAPDOOR rule(s) have matched traffic (chain is in the path)"
+        else
+            warn "TRAPDOOR rules present but not one has matched a packet — present is not enforcing; check rule order and DNAT destination"
+        fi
+    fi
+
     if [[ "$TRAPDOOR_RULES" -eq 0 ]]; then
         warn "no TRAPDOOR-scope rules in DOCKER-USER (make firewall --apply); INPUT policy + Docker chains only"
     else
