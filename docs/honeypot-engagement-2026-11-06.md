@@ -14,6 +14,21 @@ discipline or a better tool held by one sharper observer. It was **two independe
 colliding**, in unshared directions. Alone on that host, either of us would have filed the wrong claim
 as a finding and it would have survived review.
 
+### The mechanism behind all six
+
+Four checks today had no failing state — my T1b query, June's T1c exit status, this morning's firewall
+port counter, and June's Tier 4 count — plus two service-versus-host errors. Every one of them produced
+an answer without producing evidence that could have contradicted it.
+
+Two sentences, and the second is the sharper one:
+
+> A check that cannot fail reads exactly like a check that passed.
+> And a count that looks plausible reads exactly like a count that was verified.
+
+The Tier 4 case is worse than the other three. It counted invocations instead of requests; the number was
+plausible, and a plausible number confirmed by a plausible mechanism is the one that survives review. A
+wrong number that *looks* wrong gets caught. This one had to be caught by re-reading the script.
+
 Conclusion: **"be more careful" is not a control and never will be.** The fix is checks that fail closed,
 in sequence, before the first packet. Everything below — the grade, the defect list, the refutations —
 is about one decoy on one afternoon and will not matter in five years.
