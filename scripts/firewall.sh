@@ -135,12 +135,13 @@ cat <<EOF
 # 127.0.0.1 -> 000 — so it breaks the health check and closes nothing.
 #
 # IF YOU GENUINELY NEED TO RESTRICT THE DECOY AT THE FIREWALL LAYER, the rule
-# belongs in DOCKER-USER, which Docker evaluates before its own FORWARD rules
-# and which nothing else here appends to:
-#
-#   iptables -I DOCKER-USER -p tcp -m multiport
-#       --dports 2222,2223,8080 -j DROP
-#       ! -s 192.168.0.0/16
+# belongs in DOCKER-USER. Match the CONTAINER destination, not the published
+# host port: this chain is reached from FORWARD, which runs after DNAT has
+# already rewritten the destination. Measured on .45, 2026-11-06: a DROP
+# matching the host port counted 0 packets and the decoy answered 200; the
+# same DROP matching the container address and port counted 6 and the request
+# returned 000. A rule written against the host port is present, tidy,
+# idempotent, and matches nothing.
 #
 # The ports and the source are written as literals above, on purpose. This
 # block lives inside the UNQUOTED heredoc that produces the report, so bash
