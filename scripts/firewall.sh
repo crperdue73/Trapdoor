@@ -220,10 +220,18 @@ PORTS="${COWRIE_SSH_PORT},${COWRIE_TELNET_PORT},${WEB_PORT}"
 # The DESTINATIONS map below is built from `docker port` for the same reason
 # the bridges are enumerated: it can fail, and when it fails the rules are
 # vacuous, so it must fail loudly rather than write a rule that matches air.
-if ! DESTS=$(docker ps --format '{{.Names}}' 2>/dev/null \
-        | while read -r c; do
-            docker port "$c" 2>/dev/null
-          done | sort -u); then
+# Read the destinations out of the nat table, not out of `docker port`.
+# `docker port` prints "80/tcp -> 192.168.111.45:8080" -- container on the
+# LEFT, published address on the RIGHT, which is the opposite of what a rule
+# needs and of what the arrow suggests. Parsing it yields the host address,
+# and a rule matching the host address after DNAT matches nothing.
+#
+# The DNAT rules are the ground truth: they are literally what the packet
+# gets rewritten to. Docker writes them as
+#   DNAT tcp dpt:<hostport> to:<container-addr>:<container-port>
+if ! DESTS=$(iptables -t nat -S DOCKER 2>/dev/null \
+        | sed -n 's/.*DNAT.*to:\([0-9.]*\):\([0-9]*\)$/\1:\2/p' \
+        | sort -u); then
     DESTS=""
 fi
 
@@ -271,11 +279,8 @@ echo "allowing sources: ${LAB_CIDR} plus local bridges: ${BRIDGES}"
 # `docker port` prints "addr:port"; split it so each part lands in the right
 # iptables field -- putting a combined addr:port into --dport is rejected.
 SPECS=()
-while read -r line; do
-    [[ -z "$line" ]] && continue
-    # docker port prints "172.22.0.2:80" (or "[::]:80"); keep only v4 forms.
-    dest="${line#* -> }"
-    [[ "$dest" == \[* ]] && continue
+while read -r dest; do
+    [[ -z "$dest" ]] && continue
     dhost="${dest%:*}"
     dport="${dest##*:}"
     for src in "$LAB_CIDR" $BRIDGES; do
