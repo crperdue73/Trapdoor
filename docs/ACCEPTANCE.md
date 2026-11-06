@@ -115,14 +115,52 @@ internet is that the farm is triple-NATed.
 These are stated so nobody reads Part 1 as more than it is. Each one has a
 line saying what would close it.
 
-### ⚠️ G1 — `firewall.sh --apply` has never run on a host with root
+### ⚠️ G1b — DOCKER-USER is not in the decoy's packet path on `.45`
 
-**The single largest gap in this repo.** Everything in `firewall.sh` from the
-`== applying ==` banner to the final `applied and verified.` is a claim about
-a code path nobody has executed. It parses (`bash -n` clean, `set -euo
-pipefail`), and parsing is not running.
+**This is the one to read.** `--apply` now runs (G1a below), and what it
+shows is that the rule it builds is unreachable.
 
-Specifically unproven:
+Measured 2026-11-06 on `.45`: after a remote request to `:8080` from `.43`,
+`DOCKER-USER`'s catch-all `RETURN` gained 12 pkts / 2230 bytes and the `DROP`
+above it **stayed at 0**. A test `DROP tcp dport 8080` with no source match,
+inserted at position 1, did not stop a request from returning 200 and counted
+nothing. `ss -tlnp` shows `docker-proxy` holding the published port over
+loopback.
+
+So traffic to the published port is not DNATed through `FORWARD`, and
+`DOCKER-USER` never sees it. `scripts/firewall.sh` still states the opposite
+in its header comment, with those same 12 packets cited as proof.
+
+**Not proven: that any rule in this repo has ever denied a packet.** The
+`--apply` block applies cleanly, verifies cleanly, is idempotent — and
+enforces nothing, because it is written to a chain the traffic never visits.
+
+**To close:** find the real path (`userland-proxy` setting), write the rule to
+that path, and prove it with a negative test — a DROP that turns a 200 into a
+timeout from a remote host. Full detail in `docs/g1-findings-2026-11-06.md`.
+
+### ✅ G1a — `firewall.sh --apply` has run on a host with root
+
+Closed 2026-11-06 on `test-trapdoor`, as root. Every item on the old list was
+resolved: the backup was written and readable, the teardown loop converged,
+the bridge enumeration returned `172.17.0.1 172.22.0.1 172.23.0.1`, the
+post-apply probes passed with the DROP in the chain, and a second `--apply`
+diffed clean against the first. Evidence in `out/g1/` on the host.
+
+Two defects were found in the dry-run report before `--apply` was run, both
+inside the unquoted heredoc that produces it — see `docs/g1-findings-2026-11-06.md`.
+And the first `verify.sh` after applying printed `no TRAPDOOR rules applied`,
+because check 7 grepped the ruleset for a string no rule contained.
+
+**Originally claimed:** `firewall.sh --apply` has never run on a host with root.
+What that meant, kept here because the shape of the gap is the lesson:
+
+**It was the single largest gap in this repo.** Everything in `firewall.sh`
+from the `== applying ==` banner to the final `applied and verified.` was a
+claim about a code path nobody had executed. It parsed (`bash -n` clean,
+`set -euo pipefail`), and parsing is not running.
+
+Specifically unproven, all now resolved:
 
 - that `iptables-save > /root/iptables-backup-*.rules` succeeds and the
   rollback file is readable when it matters
@@ -134,10 +172,14 @@ Specifically unproven:
   the DROP is actually in the chain
 - **that it is idempotent** — run twice, same chain, no duplicates
 
-**To close:** on `.45`, as root, in this order — `scripts/firewall.sh` (read
-the printed output first), `scripts/firewall.sh --apply`, `scripts/verify.sh`,
-then `--apply` a second time and diff `iptables -S DOCKER-USER` between runs.
-Record the backup filename and the full output in `out/`.
+**How it was closed:** on `.45`, as root — `scripts/firewall.sh` (read the
+printed output first, which is how two heredoc defects were found),
+`scripts/firewall.sh --apply`, `scripts/verify.sh`, then `--apply` a second
+time and diff `iptables -S DOCKER-USER` between runs. Backup filename and full
+output are in `out/g1/` on the host.
+
+**Note what closing it did not buy.** The code path works. The rule it writes
+does not reach the traffic — that is G1b, and it is the more important item.
 
 **A specific warning for whoever runs it:** `verify.sh` check 6 is the
 unreachability probe for A9. An `OK` there with **no** accompanying
