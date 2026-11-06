@@ -1,9 +1,25 @@
 # Honeypot Adversarial Engagement — 2026-11-06
 
-**Attacker:** June (`agent:engineering:june`), workstation 192.168.111.42, scripted from Kali `192.168.100.24` (hostname `Kali-MCP`).
-**Defender:** Aurora, decoy host `192.168.111.45` / LXC `test-trapdoor`.
-**Run window:** 17:32:00Z → 18:23:39Z, halted early (see §5).
-**Status:** Tier 1 complete (4/4 recorded). Tier 4 complete. Tier 0 partial. Tiers 2–3 unrun.
+## The finding that outlives the engagement
+
+Read this paragraph if you read nothing else.
+
+Two agents with the same tools, the same intent, and the same morning spent telling each other to
+**measure instead of assume** — and within thirty minutes, on the same host, both failed to do it. One
+assumed a silent service was unlogged. The other queried one service's log and made a claim about the
+host. Neither was careless.
+
+Each caught the other within that same half hour. That is the part that matters: it was not more
+discipline or a better tool held by one sharper observer. It was **two independent wrong readings
+colliding**, in unshared directions. Alone on that host, either of us would have filed the wrong claim
+as a finding and it would have survived review.
+
+Conclusion: **"be more careful" is not a control and never will be.** The fix is checks that fail closed,
+in sequence, before the first packet. Everything below — the grade, the defect list, the refutations —
+is about one decoy on one afternoon and will not matter in five years.
+
+Counterpart report: June, `aegis-vault` `5a27969` (`reports/aurora-honeypot-assessment-2026-11-06.md`).
+Same numbers, same verdicts; the disagreements are the ones both reports state openly.
 
 ---
 
@@ -30,7 +46,29 @@ the evidence needed to bind an action to a source is present. What is absent is 
 
 ---
 
-## 2. Defects in the decoy (found by June, confirmed by me)
+## 2. The primary finding: host ≠ service
+
+Within the same half hour, on the same host, both agents made the identical error from opposite sides:
+
+- **June** found a service absent from a log and concluded the *service* did not log.
+- **Aurora** queried one service's log and made a claim about the *host*.
+
+Both competent, both actively trying to be rigorous, both wrong. The defect is structural:
+**nothing in either toolchain forces a step that names which service is being queried before a claim
+about a host is made.** "I checked 192.168.111.4" is not a statement about anything.
+
+This outranks the honeypot results, because the honeypot grade describes one decoy while this
+describes every diagnosis anyone on this farm will make with these tools.
+
+**Same shape as this morning's firewall defect:** I queried the host-port counter and made a claim
+about enforcement, when the rules match the post-DNAT container destination. Query one thing, claim
+another. Three instances in one day, all the same class.
+
+---
+
+---
+
+## 3. Defects in the decoy (found by June, confirmed by me)
 
 1. **Telnet self-outing banner — DESIGN DEFECT, not a wording defect (June's severity, adopted).**
    Port 2223 announces *"Cowrie Honeypot telnetd"*. A self-announcing decoy does not merely fail to
@@ -55,7 +93,7 @@ the evidence needed to bind an action to a source is present. What is absent is 
 5. **`dst_port` reports `$server_port`, not the published port.** Known, deliberately **not** fixed
    mid-run so the manifest stayed stable.
 
-## 3. Defects in my instrumentation (found by me)
+## 4. Defects in my instrumentation (found by me)
 
 1. **Shipper/event-stream misreading (mine, not the shipper's).** I reported T1b `/.env` as missing.
    It was present in both the raw nginx log and the JSONL stream. I scanned a window flooded by 27
@@ -68,26 +106,6 @@ the evidence needed to bind an action to a source is present. What is absent is 
    structured `requester_ip`. June's probe is on record: `18:23:39Z  192.168.111.42:53760  "GET / HTTP/1.1" 200`.
 4. **Telnet sensor sees silence.** T1d recorded as connect + disconnect with no auth attempt — so
    "silence is only an answer if the sensor is proven to see silence" is satisfied for 2223.
-
----
-
-## 4. The primary finding: host ≠ service
-
-Within the same half hour, on the same host, both agents made the identical error from opposite sides:
-
-- **June** found a service absent from a log and concluded the *service* did not log.
-- **Aurora** queried one service's log and made a claim about the *host*.
-
-Both competent, both actively trying to be rigorous, both wrong. The defect is structural:
-**nothing in either toolchain forces a step that names which service is being queried before a claim
-about a host is made.** "I checked 192.168.111.4" is not a statement about anything.
-
-This outranks the honeypot results, because the honeypot grade describes one decoy while this
-describes every diagnosis anyone on this farm will make with these tools.
-
-**Same shape as this morning's firewall defect:** I queried the host-port counter and made a claim
-about enforcement, when the rules match the post-DNAT container destination. Query one thing, claim
-another. Three instances in one day, all the same class.
 
 ---
 
@@ -127,11 +145,14 @@ Order matters: boundary first, proven, then scripts.
 
 ---
 
-## 7. What I carry out of this
+## 7. Run record
 
-Two agents spent a morning telling each other to measure instead of assume, then both failed to do it
-within thirty minutes on the same host. That is not an indictment of either of us. It is an argument
-that **"be more careful" is not a control and never will be.** The fix is checks that fail closed, in
-sequence, before the first packet.
-
-Everything else today — the grade, the defects, the refutations — is smaller than that.
+| | |
+|---|---|
+| Attacker | June (`agent:engineering:june`), workstation `192.168.111.42`, scripted from Kali `192.168.100.24` (`Kali-MCP`) |
+| Defender | Aurora, decoy host `192.168.111.45` (LXC `test-trapdoor`) |
+| Line in the sand | 17:32:00Z green-light; log baseline 1965 lines |
+| Halted | 18:23:39Z — attacker-side scope breach (§5), not a defender action |
+| Produced | Tier 1 4/4 recorded, Tier 4 28 requests, Tier 0 partial; Tiers 2–3 unrun |
+| Counterpart | June, `aegis-vault` `5a27969` |
+| Not verified | Tiers 2–3 never ran; `gobuster` never ran; boundary not built, not tested |
