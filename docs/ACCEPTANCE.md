@@ -115,29 +115,37 @@ internet is that the farm is triple-NATed.
 These are stated so nobody reads Part 1 as more than it is. Each one has a
 line saying what would close it.
 
-### ⚠️ G1b — DOCKER-USER is not in the decoy's packet path on `.45`
+### ✅ G1c — a TRAPDOOR rule has denied a packet
 
-**This is the one to read.** `--apply` now runs (G1a below), and what it
-shows is that the rule it builds is unreachable.
+Closed 2026-11-06 on `.45`. The negative test that everything above was
+missing:
 
-Measured 2026-11-06 on `.45`: after a remote request to `:8080` from `.43`,
-`DOCKER-USER`'s catch-all `RETURN` gained 12 pkts / 2230 bytes and the `DROP`
-above it **stayed at 0**. A test `DROP tcp dport 8080` with no source match,
-inserted at position 1, did not stop a request from returning 200 and counted
-nothing. `ss -tlnp` shows `docker-proxy` holding the published port over
-loopback.
+```
+iptables -I DOCKER-USER 1 -s 192.168.111.43 -p tcp -d 172.22.0.2 --dport 80 -j DROP
+```
 
-So traffic to the published port is not DNATed through `FORWARD`, and
-`DOCKER-USER` never sees it. `scripts/firewall.sh` still states the opposite
-in its header comment, with those same 12 packets cited as proof.
+From `.43`: request returns `000`, counter **7**. From `.45`: `200`.
+Selective denial, measured both directions.
 
-**Not proven: that any rule in this repo has ever denied a packet.** The
-`--apply` block applies cleanly, verifies cleanly, is idempotent — and
-enforces nothing, because it is written to a chain the traffic never visits.
+Getting there took four defects, each of which made the previous fix look
+correct — the heredoc, check 7's grep, the wrong destination field, and
+`-A` appending below Docker's own `RETURN`. Two of the four were answered by
+the same observation: **a rule that is present is not a rule that matches.**
 
-**To close:** find the real path (`userland-proxy` setting), write the rule to
-that path, and prove it with a negative test — a DROP that turns a 200 into a
-timeout from a remote host. Full detail in `docs/g1-findings-2026-11-06.md`.
+### ⚠️ G1b — DOCKER-USER was not in the decoy's packet path on `.45` (RESOLVED)
+
+Kept because the wrong diagnosis is the useful part. I concluded twice that
+traffic never reached the host, and both times the evidence was bad: I watched
+`INPUT` counters (wrong chain), and I read "no counter moved" as "no traffic"
+when the rules were simply unreachable.
+
+The one test that settled it was stopping the decoy container: the port went
+`000`. Traffic *had* been reaching the container the whole time. That test
+took thirty seconds and I ran it last.
+
+The catch-all `RETURN` gaining 12 pkts while the `DROP` above it stayed at 0
+was real, and it was Docker's own traffic, not the decoy's — the header
+comment cited it as proof of the wrong thing.
 
 ### ✅ G1a — `firewall.sh --apply` has run on a host with root
 
@@ -178,8 +186,10 @@ printed output first, which is how two heredoc defects were found),
 time and diff `iptables -S DOCKER-USER` between runs. Backup filename and full
 output are in `out/g1/` on the host.
 
-**Note what closing it did not buy.** The code path works. The rule it writes
-does not reach the traffic — that is G1b, and it is the more important item.
+**Note what closing it did not buy.** The code path works. On the day it was
+closed, the rule it wrote still did not reach the traffic — that was G1b,
+since resolved via G1c. Apply succeeding and apply enforcing are different
+claims, and this file treats them as different claims now.
 
 **A specific warning for whoever runs it:** `verify.sh` check 6 is the
 unreachability probe for A9. An `OK` there with **no** accompanying
