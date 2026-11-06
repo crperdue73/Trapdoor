@@ -230,7 +230,7 @@ PORTS="${COWRIE_SSH_PORT},${COWRIE_TELNET_PORT},${WEB_PORT}"
 # gets rewritten to. Docker writes them as
 #   DNAT tcp dpt:<hostport> to:<container-addr>:<container-port>
 if ! DESTS=$(iptables -t nat -S DOCKER 2>/dev/null \
-        | sed -n 's/.*DNAT.*to:\([0-9.]*\):\([0-9]*\)$/\1:\2/p' \
+        | sed -n 's/.*--to-destination \([0-9.]*\):\([0-9]*\).*/\1:\2/p' \
         | sort -u); then
     DESTS=""
 fi
