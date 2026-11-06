@@ -205,6 +205,37 @@ echo "rollback file: ${BACKUP}"
 #   -j DROP
 PORTS="${COWRIE_SSH_PORT},${COWRIE_TELNET_PORT},${WEB_PORT}"
 
+# THE PORT IN DOCKER-USER IS NOT THE PORT ON THE HOST.
+#
+# DOCKER-USER is traversed from FORWARD, which runs AFTER nat PREROUTING has
+# rewritten the destination. A packet addressed to host:8080 arrives in this
+# chain addressed to the container's own address and port. Measured on
+# 2026-11-06: a DROP matching --dports 8080 counted 0 packets while the decoy
+# answered 200; the same DROP matching the post-DNAT destination counted 6 and
+# returned 000. Every rule this script built before that date matched the
+# pre-DNAT port and therefore matched nothing, which is why the chain could
+# hold five correct-looking rules and restrict no traffic at all.
+#
+# The DESTINATIONS map below is built from `docker port` for the same reason
+# the bridges are enumerated: it can fail, and when it fails the rules are
+# vacuous, so it must fail loudly rather than write a rule that matches air.
+if ! DESTS=$(docker ps --format '{{.Names}}' 2>/dev/null \
+        | while read -r c; do
+            docker port "$c" 2>/dev/null | awk -F' -> ' '{print $2}'
+          done | sort -u | paste -sd' '); then
+    DESTS=""
+fi
+
+if [[ -z "$DESTS" ]]; then
+    echo "REFUSING: cannot resolve container destinations for the published" >&2
+    echo "          ports. A DOCKER-USER rule matching the host port matches" >&2
+    echo "          nothing, because DNAT has already rewritten it. Resolve" >&2
+    echo "          the destinations or do not use --apply on this host." >&2
+    exit 1
+fi
+
+echo "container destinations (post-DNAT): ${DESTS}"
+
 # Rules are appended in reading order, but the ACCEPTs must sit above the DROP
 # on every re-run, so the whole set is torn down and rebuilt.
 #
@@ -235,11 +266,18 @@ echo "allowing sources: ${LAB_CIDR} plus local bridges: ${BRIDGES}"
 # so the check printed "no TRAPDOOR rules applied" on a host where five of
 # them had just been applied and verified. A check that cannot see the thing
 # it is checking is G2's shape again: it reads exactly like a clean result.
+# Match the post-DNAT destination, one rule set per destination address.
+# `docker port` prints "addr:port"; split it so each part lands in the right
+# iptables field -- putting a combined addr:port into --dport is rejected.
 SPECS=()
-for src in "$LAB_CIDR" $BRIDGES; do
-    SPECS+=("-p tcp -m multiport --dports ${PORTS} -s ${src} -m comment --comment TRAPDOOR-scope -j ACCEPT")
+for dest in $DESTS; do
+    dhost="${dest%:*}"
+    dport="${dest##*:}"
+    for src in "$LAB_CIDR" $BRIDGES; do
+        SPECS+=("-p tcp -d ${dhost} --dport ${dport} -s ${src} -m comment --comment TRAPDOOR-scope -j ACCEPT")
+    done
+    SPECS+=("-p tcp -d ${dhost} --dport ${dport} -m comment --comment TRAPDOOR-scope -j DROP")
 done
-SPECS+=("-p tcp -m multiport --dports ${PORTS} -m comment --comment TRAPDOOR-scope -j DROP")
 
 # Clear any previous version of this ruleset so re-runs are convergent rather
 # than additive. Only touches rules on exactly these three ports.
@@ -247,7 +285,7 @@ while read -r rule; do
     [[ -z "$rule" ]] && continue
     # shellcheck disable=SC2086
     iptables -D DOCKER-USER $rule 2>/dev/null || true
-done < <(iptables -S DOCKER-USER | grep -- "--dports ${PORTS}" | sed 's/^-A DOCKER-USER //' || true)
+done < <(iptables -S DOCKER-USER | grep -- 'TRAPDOOR-scope' | sed 's/^-A DOCKER-USER //' || true)
 
 for spec in "${SPECS[@]}"; do
     # shellcheck disable=SC2086
@@ -276,7 +314,7 @@ for spec in "${SPECS[@]}"; do
     fi
 done
 
-DUPES=$(iptables -S DOCKER-USER | grep -c -- "--dports ${PORTS}" || true)
+DUPES=$(iptables -S DOCKER-USER | grep -c -- 'TRAPDOOR-scope' || true)
 if [[ "$DUPES" -eq "${#SPECS[@]}" ]]; then
     echo "  OK   chain holds ${DUPES} rules, no duplicates"
 else
@@ -293,6 +331,25 @@ for p in "$WEB_PORT"; do
         echo "  FAIL decoy stopped answering on ${p} after apply (got '${code}')" >&2
         echo "       roll back: iptables-restore < ${BACKUP}" >&2
         FAIL=1
+    fi
+done
+
+# The rules must MATCH something. A DROP that has never dropped anything is
+# a comment with a deadline, and on 2026-11-06 this chain held five rules
+# matching a port that DNAT had already rewritten -- all present, no
+# duplicates, decoy answering, and not one packet touched. Read the counters,
+# because presence is not enforcement.
+for i in "${!SPECS[@]}"; do
+    # shellcheck disable=SC2086
+    hits=$(iptables -L DOCKER-USER -v -n 2>/dev/null \
+        | awk -v d="$(echo ${SPECS[$i]} | sed 's/.*-d \([0-9.]*\).*/\1/')" \
+              -v p="$(echo ${SPECS[$i]} | sed 's/.*--dport \([0-9]*\).*/\1/')" \
+              '$0 ~ d && $0 ~ ("dpt:" p) {print $1; exit}')
+    if [[ -z "$hits" ]]; then
+        echo "  WARN no rule found for a built spec -- counters unreadable"
+    elif [[ "$hits" -gt 0 ]]; then
+        echo "  OK   rule has matched traffic (${hits} pkts)"
+        break
     fi
 done
 
