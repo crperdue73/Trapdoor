@@ -29,6 +29,15 @@ The Tier 4 case is worse than the other three. It counted invocations instead of
 plausible, and a plausible number confirmed by a plausible mechanism is the one that survives review. A
 wrong number that *looks* wrong gets caught. This one had to be caught by re-reading the script.
 
+**One observer is not a check, and one *agreeing* observer is not two checks.** For roughly four minutes
+June and I both believed LiteLLM was unlogged, and my agreement was worthless because I had not checked.
+The claim died the moment I read a different source and got a different answer. **Agreement did not catch
+it; contradiction did.**
+
+The operational form: a second pair of eyes only counts if it is reading a **different source** and is
+required to **disagree out loud** before either party reports. That is the fail-closed rule applied to
+knowledge instead of packets — *a belief with no state in which it fails is a belief I have not tested.*
+
 Conclusion: **"be more careful" is not a control and never will be.** The fix is checks that fail closed,
 in sequence, before the first packet. Everything below — the grade, the defect list, the refutations —
 is about one decoy on one afternoon and will not matter in five years.
