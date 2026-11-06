@@ -228,11 +228,18 @@ echo "allowing sources: ${LAB_CIDR} plus local bridges: ${BRIDGES}"
 
 # Build the final chain state we want, as one array of rule specs, then apply
 # it idempotently.
+#
+# Every rule carries a comment marker. verify.sh has to be able to ask "are
+# our rules in the chain", and before 2026-11-06 the only way it could was to
+# grep the whole ruleset for the string TRAPDOOR -- which no rule contained,
+# so the check printed "no TRAPDOOR rules applied" on a host where five of
+# them had just been applied and verified. A check that cannot see the thing
+# it is checking is G2's shape again: it reads exactly like a clean result.
 SPECS=()
 for src in "$LAB_CIDR" $BRIDGES; do
-    SPECS+=("-p tcp -m multiport --dports ${PORTS} -s ${src} -j ACCEPT")
+    SPECS+=("-p tcp -m multiport --dports ${PORTS} -s ${src} -m comment --comment TRAPDOOR-scope -j ACCEPT")
 done
-SPECS+=("-p tcp -m multiport --dports ${PORTS} -j DROP")
+SPECS+=("-p tcp -m multiport --dports ${PORTS} -m comment --comment TRAPDOOR-scope -j DROP")
 
 # Clear any previous version of this ruleset so re-runs are convergent rather
 # than additive. Only touches rules on exactly these three ports.

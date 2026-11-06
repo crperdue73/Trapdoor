@@ -376,7 +376,12 @@ echo "7. host firewall"
 if ! command -v iptables >/dev/null 2>&1; then
     skip "firewall — iptables not installed, nothing examined"
 else
-    TRAPDOOR_RULES=$(iptables -S 2>/dev/null | grep -c 'TRAPDOOR' || true)
+    # Count what DOCKER-USER actually holds, not what the ruleset is named.
+    # The previous form grepped the whole ruleset for the literal string
+    # TRAPDOOR, which appeared in no rule this script writes, so a host with
+    # all five rules applied and verified still reported "no TRAPDOOR rules
+    # applied". It was true about the grep and false about the firewall.
+    TRAPDOOR_RULES=$(iptables -S DOCKER-USER 2>/dev/null | grep -c 'TRAPDOOR-scope' || true)
     UFW_STATE=$(ufw status 2>/dev/null | head -1 || true)
 
     if [[ -n "$UFW_STATE" ]]; then
@@ -384,7 +389,7 @@ else
     fi
 
     if [[ "$TRAPDOOR_RULES" -eq 0 ]]; then
-        warn "no TRAPDOOR rules applied (make firewall --apply); INPUT policy + Docker chains only"
+        warn "no TRAPDOOR-scope rules in DOCKER-USER (make firewall --apply); INPUT policy + Docker chains only"
     else
         ok "${TRAPDOOR_RULES} TRAPDOOR rules present"
     fi
@@ -394,8 +399,12 @@ else
     # INPUT rules cannot restrict the decoy. DOCKER-USER is the hook that
     # does. What we report is the scope those rules enforce.
     if [[ -z "$LAB_CIDR" ]]; then
-        bad "LAB_CIDR is unset — no scope to enforce"
-    elif [[ "$LAB_CIDR" == "192.168.0.0/16" ]]; then
+        # LAB_CIDR defaults to the farm /16 in firewall.sh. Reporting "unset"
+        # here as a failure told every student who never set it that the host
+        # had no scope, when the scope was the widest one available. Report the
+        # effective value, because that is the one the rules enforce.
+        LAB_CIDR="192.168.0.0/16"
+        warn "LAB_CIDR unset in the environment — firewall.sh defaults to the farm /16, so that is the scope in force"
         warn "LAB_CIDR is the whole farm /16 — every host on the network can reach the decoy (DOCKER-USER rule matches nothing)"
         warn "  this is not a firewall failure; it is scope set too wide. Narrow LAB_CIDR for a real boundary"
     else
