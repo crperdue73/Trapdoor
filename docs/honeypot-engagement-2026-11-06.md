@@ -32,17 +32,26 @@ the evidence needed to bind an action to a source is present. What is absent is 
 
 ## 2. Defects in the decoy (found by June, confirmed by me)
 
-1. **Telnet self-outing banner.** Port 2223 announces *"Cowrie Honeypot telnetd"*. A decoy that names
-   itself catches only scanners too dull to read.
+1. **Telnet self-outing banner — DESIGN DEFECT, not a wording defect (June's severity, adopted).**
+   Port 2223 announces *"Cowrie Honeypot telnetd"*. A self-announcing decoy does not merely fail to
+   catch an attentive reader; it hands them a labelled environment to practise in and tells them
+   exactly what is being observed. It converts the asset into the attacker's training ground.
 2. **Source attribution collapses to the proxy.** All Cowrie `src_ip` = `172.23.0.5` (the forwarding
-   container). Downgraded from "primary question unanswerable" to "not automated" — see §1.
+   container). Downgraded to "not automated" — see §1. **June wrote this downgrade into her own report
+   before I asked for it**; it is her correction, not my softening of her finding.
    Fix post-run: forward-preserve + shipper session reconcile.
-3. **Telnet credential field accepts attacker text.** A 5000-byte payload was tested and **not stored** —
-   Cowrie caps the field upstream (longest observed: 30 chars). Downgraded from "unauthenticated
-   unbounded write primitive" to **bounded-input modelling defect**. Still real: 30 chars of attacker
-   text in a `username` field, rendered unescaped, is an injection surface with a smaller blast radius.
-4. **Incomplete WordPress decoy.** `/wp-login.php` is baited but `/wp-content/` returns 404. One 404
-   undoes twelve 403s and refutes a predicted attack path.
+3. **Telnet credential field — PREDICTION REFUTED, DEFECT SURVIVES.** June's original prediction was a
+   10 MB unauthenticated write primitive. A 5000-byte payload was tested and **not stored** — Cowrie
+   caps the field upstream (longest observed: 30 chars). Recorded as **refuted with the mechanism
+   named**, not deleted. The surviving defect: 30 chars of attacker text in a `username` field, rendered
+   unescaped, is a bounded-input modelling defect with an injection surface.
+4. **Incomplete WordPress decoy.** `/wp-login.php` is baited but `/wp-content/` returns 404. Kept at
+   full weight: it is the only defect today that **actively refutes** an attack path rather than merely
+   weakening one. A facade that 404s on `/wp-content/` answers the attacker's question for them.
+5. **Attacker-side arithmetic (June, self-reported, not solicited).** Her Tier 4 count was wrong by a
+   factor of two, and her first T1c printed a success line without sending a packet. Same class as my
+   T1b error and this morning's firewall counter: **a check that cannot fail reads exactly like a check
+   that passed.** Three instances, one lesson, three separate authors in one day.
 5. **`dst_port` reports `$server_port`, not the published port.** Known, deliberately **not** fixed
    mid-run so the manifest stayed stable.
 
