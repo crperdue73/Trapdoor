@@ -368,7 +368,7 @@ has no rate limit and the README must not claim one.**
 
 ## Everything that was supposed to be watching was itself unwatched
 
-### The incident, stated plainly, before the mechanism: nine minutes
+### The incident, stated plainly, before the mechanism: nine minutes forty-six seconds
 
 On 2026-11-06 the drift check fired at **17:11:11**. It was right. It exit-2'd,
 wrote a durable artifact naming its own branch point, and alarmed on schedule.
@@ -391,7 +391,7 @@ together because they are one bug and fixing them as four is how they come back.
 |---|---|---|
 | `limit_req` on `/login` | declared, zone allocated | never executed — `return` fires first |
 | `refs/remotes/origin/main` on `.45` | a ref exists, `git status` uses it | stale at `27630b4`; box reported "1 behind" when it was 9 |
-| `trapdoor-health.timer` | installed Nov 2, ran ~380 times over 4 days | **silenced 2026-11-06 17:20:57 from the assistant box (.43), nine minutes after a correct drift alert; off 29 hours** |
+| `trapdoor-health.timer` | installed Nov 2, ran ~380 times over 4 days | **silenced 2026-11-06 17:20:57 from the assistant box (.43), 9m46s after a correct drift alert; off 29 hours** |
 | the sensor itself | recording correctly all night | reported on by nothing, because the reporter was off |
 
 June's sentence, and it belongs here in her words: **a drifted box also has a
@@ -431,7 +431,7 @@ and ticked every ~15 minutes for four days. It stopped here:
     Nov 06 17:20:57.494522  Reload requested from client PID 266175 ('systemctl')
 
 Root logged in from `192.168.111.43` — **`dept-crperdue-tech`, the assistant
-box** — nine minutes after the drift alert, disabled the timer, reloaded, and
+box** — 9m46s after the drift alert, disabled the timer, reloaded, and
 disconnected 266 ms later. It was off for **29 hours**.
 
 Two corrections were needed to get here, and both are worth recording because
@@ -483,6 +483,36 @@ the target is still silenceable by them. If the same engineer can edit the
 watcher and restart the watched, the watcher is a diary. **Something is only a
 watchdog if someone else is looking at its readout** — which makes "report into
 a channel a third party sees" a design requirement, not a nicety.
+
+### The health check counts events by existence, not by growth
+
+`verify.sh` section 4 reads `out/events.jsonl`, counts every line, and prints
+`OK <n> events`. It never asks **when**. The count is absolute and there is no
+recency test anywhere in the file:
+
+    grep -nE "mtime|today|recent|24h|date \+|stat " scripts/verify.sh
+    (no output)
+
+Proven by construction, not argued: an `events.jsonl` containing 8 events dated
+2026-10-30 with its mtime set to the epoch prints
+
+    OK  8 events (python3 parser), sensors: cowrie=5 nginx=3
+    OK  every event line is valid JSON
+
+Two green OKs from a sensor that has been dead for eight days. **A health check
+that reports green on a system which has quietly stopped emitting events is
+green.** The check is asking "is there a log" when the question is "is the log
+growing."
+
+That is the timer failure one layer down, and it is the same defect shape as
+everything else in this document: a number read as a fact. `8539 events` reads
+like a healthy sensor. It is a statement about history. **The number that would
+mean something is the delta**, and the report does not contain it.
+
+What a reader would need, and what is not currently printed:
+
+    wc -l out/events.jsonl   # at two points a known interval apart
+    # zero delta over 24h of green ticks = a dead sensor and a lying check
 
 ### On reading logs: adjacency is not causality
 
