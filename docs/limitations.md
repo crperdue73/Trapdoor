@@ -368,6 +368,22 @@ has no rate limit and the README must not claim one.**
 
 ## Everything that was supposed to be watching was itself unwatched
 
+### The incident, stated plainly, before the mechanism: nine minutes
+
+On 2026-11-06 the drift check fired at **17:11:11**. It was right. It exit-2'd,
+wrote a durable artifact naming its own branch point, and alarmed on schedule.
+The timer was silenced at **17:20:57**. Nine minutes.
+
+**Every piece of the system worked.** The checker detected real drift, reported
+it correctly, persisted the evidence, and alarmed on time. What failed was the
+response to a correct alarm. Somebody saw a red light and turned off the light.
+
+That means the four-day green streak before it was not a result. It was 380
+runs with nobody reading them, and the first one that mattered got read as
+*"make it stop."* **You cannot unit-test the person who answers the phone.**
+This is the one thing in this document that a future reader cannot fix by
+patching code, which is why it goes above the mechanism rather than under it.
+
 Four instances, found in one night (2026-11-07), all the same mechanism. Written
 together because they are one bug and fixing them as four is how they come back.
 
@@ -456,9 +472,35 @@ written for a monitor you silenced on purpose — because it did not fail.
 
 That is the standing argument for the external check, sharpened by the fact
 that the silencer was on `.43` — the assistant box, not the target box:
-**the thing that asks "did your check run" must not be reachable from the
-session that might silence it.** Outside the repo is not enough. Outside the
-operator's shell is the actual requirement, and this incident is the proof.
+
+> **The thing that asks "did your check run" must not be within the blast
+> radius of the thing it watches.** Not outside the repo — outside the
+> operator's reach. A repo-external check run from the same shell that
+> disabled the timer is the same check with a longer path.
+
+And that has an uncomfortable consequence. A check owned by whoever has root on
+the target is still silenceable by them. If the same engineer can edit the
+watcher and restart the watched, the watcher is a diary. **Something is only a
+watchdog if someone else is looking at its readout** — which makes "report into
+a channel a third party sees" a design requirement, not a nicety.
+
+### On reading logs: adjacency is not causality
+
+Three of the wrong conclusions in this document came from a log that was
+missing data. One came from a log that had *all* of it.
+
+The reload was requested 16.390 milliseconds **after** the timer was already
+dead. At whole-second resolution those two lines sit side by side, and side by
+side reads as one causing the other. It produced a confident, specific,
+entirely false theory about a non-idempotent install target — which survived
+until it was run on a scratch unit six different ways.
+
+> **A log without fractional seconds is a log where everything that happened
+> together looks like everything that caused each other.** If a claim is
+> "this line caused that line," the timestamps have to be able to tell them
+> apart. At one-second resolution they cannot, and the honest sentence is
+> "these are adjacent," full stop. `journalctl -o short-precise` costs
+> nothing.
 
 Two rules out of this:
 
