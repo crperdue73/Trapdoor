@@ -17,7 +17,7 @@ or by a test the other person insisted on. None was caught by its author.**
 | sandbox sensor isn't logging | one maintainer | the other sampled a buffered writer and the write appeared | yes — one sample of a batched writer, again |
 | health file doesn't exist | one maintainer | `stat` raced the writer | no |
 | `limit_req` is throttling | one maintainer | a 200-request probe, zero 429s | no |
-| the watchdog timer was never enabled | one maintainer | `.verify/` held 380 reports | no |
+| the watchdog timer was never enabled | one maintainer | `.verify/` held **382 reports as of 2026-11-07 22:47 UTC** (380 when first written) | no |
 | `timer-install` isn't idempotent | one maintainer | a six-variant scratch test | no |
 | "someone on `.43` disabled it" | one maintainer | it was her own debug harness | no |
 | it was eight minutes | one maintainer | the other counted: 9m46s | no |
@@ -541,8 +541,9 @@ it correctly, persisted the evidence, and alarmed on time. What failed was the
 response to a correct alarm. Somebody saw a red light and turned off the light.
 
 That means the four-day green streak before it was not a result. It was 380
-runs with nobody reading them, and the first one that mattered got read as
-*"make it stop."* **You cannot unit-test the person who answers the phone.**
+runs with nobody reading them (the count at the time of writing; `.verify/` held
+**382 as of 2026-11-07 22:47 UTC**, and it grows every 15 minutes), and the
+first one that mattered got read as *"make it stop."* **You cannot unit-test the person who answers the phone.**
 This is the one thing in this document that a future reader cannot fix by
 patching code, which is why it goes above the mechanism rather than under it.
 
@@ -553,7 +554,7 @@ together because they are one bug and fixing them as four is how they come back.
 |---|---|---|
 | `limit_req` on `/login` | declared, zone allocated | never executed — `return` fires first |
 | `refs/remotes/origin/main` on `.45` | a ref exists, `git status` uses it | stale at `27630b4`; box reported "1 behind" when it was 9 |
-| `trapdoor-health.timer` | installed Nov 2, ran ~380 times over 4 days | **silenced 2026-11-06 17:20:57 from the assistant box (.43), 9m46s after a correct drift alert; off 29 hours** |
+| `trapdoor-health.timer` | installed Nov 2, ran ~380 times over 4 days (382 reports total as of 2026-11-07 22:47 UTC) | never enabled until `timer-install`; silenced 2026-11-06 17:20:57 |
 | the sensor itself | recording correctly all night | reported on by nothing, because the reporter was off |
 
 June's sentence, and it belongs here in her words: **a drifted box also has a
@@ -601,7 +602,8 @@ each looked convincing:
 
 1. **"The timer was never enabled"** — false. `is-enabled: disabled` read at
    22:1x on Nov 7 was a present-tense observation with no history behind it.
-   The timer ran 380 times over four days.
+   The timer ran 380 times over four days — the count when this was written; 382
+   total reports in `.verify/` as of 2026-11-07 22:47 UTC.
 2. **"`timer-install` is not idempotent, and the daemon-reload kills the
    active timer"** — false, and tested. Re-running the exact target sequence on
    a scratch unit while active leaves it active: `install` → `daemon-reload` →
@@ -622,7 +624,7 @@ than the drift fixed. Then the machine was left with a working watchdog that
 was switched off.
 
 **The journal showed only 51 `Finished` lines because journald had rotated.**
-The `.verify/` directory held 380 reports. The smaller artifact was the one
+The `.verify/` directory held 380 reports (382 as of 2026-11-07 22:47 UTC). The smaller artifact was the one
 that got believed, and it produced a theory that fit: "a unit never enabled
 leaves no failure record." The record was in a directory nobody opened.
 
@@ -710,6 +712,8 @@ Two rules out of this:
    `journalctl --list-boots`, oldest file in a directory, the shipper's
    `RETENTION_DAYS`. A count is meaningless without its window. 51 and 380
    are the same data over different windows, and only one of them was true.
+   **Every count in this document now carries a timestamp, because a count
+   without one is true until somebody re-runs it.**
 2. **The checker's output directory is better evidence than the supervisor's
    log.** The log can rotate; the artifacts persist. Check the thing the check
    wrote, not the record that it was invited to run.
