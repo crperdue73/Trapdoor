@@ -308,6 +308,90 @@ decision with the reason, and the bound gets a number.
 
 ---
 
+---
+
+## The bait path is unbounded, and the declared limiter is dead code
+
+Found 2026-11-07, jointly with June, on the live box.
+
+`web/conf.d/default.conf` declares a rate limit on the bait path:
+
+    location ~* ^/login {
+        limit_req zone=trapdoor burst=20 nodelay;
+        limit_req_status 429;
+        return 401;
+    }
+
+**It has never fired.** The comment above it says the path is rate-limited so
+one student running a wordlist demo cannot fill the disk in ninety seconds.
+There is no rate limiting. `return` is a rewrite-phase directive and fires
+before `limit_req`, which is preaccess-phase, so the bare `return 401`
+short-circuits every request before the limiter is consulted. `limit_req_zone`
+in `nginx.conf` allocates 10 MB of shared memory for a limiter that cannot run.
+
+Measured, so the shape of the gap is on the record and not in a comment:
+
+| Requests to `/login` | 429s observed |
+|---|---|
+| 200 sequential | 0 |
+| 300 parallel (`xargs -P 20`) | 0 |
+
+And measured, the cost of that gap. June drove 300 parallel requests and read
+the log before and after:
+
+- 300 requests → 300 new lines in `out/events.jsonl`, one-for-one, ~100 KB.
+- ~330 bytes per request, no ceiling of any kind.
+- rockyou is 14,344,391 entries. At 330 B each that is **~4.7 GB from one
+demo, on one path.**
+
+The file it fills is `out/events.jsonl`, which is the file retention cannot see
+(the section above). So the two defects compose: the unbounded path has no
+rate limit, and the file it grows is exempt from every deletion rule the
+shipper has.
+
+**Not fixed yet, on purpose.** The fix is to move the limit so it can actually
+run — nginx applies `limit_req` before `return` only if the limit is reached in
+preaccess, which it is not here, so the real fix is a `limit_req` on a location
+that does not short-circuit, or a `map`-driven `return` whose status the limit
+can override. That is a config change with a real risk of breaking the bait
+path, and it ships on a clean tree with a test that sends 200 requests and
+asserts a 429 appears. Until it ships, the honest statement is: **the bait path
+has no rate limit and the README must not claim one.**
+
+---
+
+## Everything that was supposed to be watching was itself unwatched
+
+Four instances, found in one night (2026-11-07), all the same mechanism. Written
+together because they are one bug and fixing them as four is how they come back.
+
+| What | Configured | What it actually did |
+|---|---|---|
+| `limit_req` on `/login` | declared, zone allocated | never executed — `return` fires first |
+| `refs/remotes/origin/main` on `.45` | a ref exists, `git status` uses it | stale at `27630b4`; box reported "1 behind" when it was 9 |
+| `trapdoor-health.timer` | installed, unit file present | never enabled; failed 2026-11-06 17:11 and stayed off |
+| the sensor itself | recording correctly all night | reported on by nothing, because the reporter was off |
+
+June's sentence, and it belongs here in her words: **a drifted box also has a
+stale view of how drifted it is.** The box's own drift report compares against
+a cached ref from its last fetch, so "1 commit behind" was a floor and not a
+measurement. `git fetch` before trusting any report that host produces.
+
+The last row is the one that hurts. The sensor was never broken. June's 300
+requests produced 300 entries, one-for-one, with `src_ip`, `http_path` and
+`http_status`. A perfect instrument with a dead readout is not a working
+instrument — it is a recording nobody will ever watch.
+
+**The fix is not in this repo, and cannot be.** Every one of these four is a
+thing whose health is only knowable by asking a different process. A repo-owned
+liveness check dies with the repo, which is what happened on the 6th. The
+required check lives outside: an external cron or another agent's heartbeat
+whose only job is to ask `.45` *did your health check run, and what did it say*,
+and to alarm on silence specifically — not on a non-zero exit, which is the case
+already handled.
+
+---
+
 ## Scope and sequencing
 
 | # | Change | Touches |
