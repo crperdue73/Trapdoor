@@ -22,6 +22,7 @@ or by a test the other person insisted on. None was caught by its author.**
 | "someone on `.43` disabled it" | one maintainer | it was her own debug harness |
 | it was eight minutes | one maintainer | the other counted: 9m46s |
 | the event count proves the sensor works | **both** | a corpse dated eight days back |
+| the ledger section exists in `cefdc9a` | one maintainer | `git show --stat` — the message described it, the diff didn't have it |
 
 (Names are left out on purpose: naming who was wrong eight times turns a spec
 back into a confession, and the roles had reversed within hours anyway.)
@@ -38,6 +39,35 @@ errors, and they were invisible from that seat. "You should have a third party
 read your alarm" is an opinion. **"Two people spent a week trying to break each
 other's work and caught none of their own" is a measurement, and it is in this
 repository.**
+
+### …and the ninth one has a lesson the other eight don't
+
+Rows 1–8 share a method: someone opened a file, a directory, or a log that the
+first person had not. The ninth has no such move available. A commit message
+accurately described a section that the commit's own diff did not contain, and
+four separate checks confirmed it — the commit existed, the branch had moved,
+the deploy host arrived at the right sha, and a second maintainer read the
+message and agreed. Every one of those was a true statement about the commit.
+**None was a statement about the file.**
+
+So the sentence this document leans on — *an author cannot see their own error
+by trying harder* — is necessary and not sufficient, because it presumes the
+error is visible to somebody. Here it wasn't. The artifact handed to the
+reviewer **was** a description of the artifact, and the description was
+internally consistent.
+
+> **A witness checks the artifact, not the author's account of the artifact.**
+
+Which puts a hard requirement on the readout this document keeps asking for. If
+the external heartbeat surfaces a summary — "health: green", "last check: OK" —
+then its readers are not witnesses, they are readers, and the same failure
+recurs one level up with nobody at fault. **Whoever consumes that readout has to
+be able to see the underlying measurement, and re-run the command that produced
+it.**
+
+The command is one flag. `git log --oneline -1 <sha>` prints the claim;
+`git show --stat <sha>` prints what the commit did. Both were available. Only
+one of them can come back red.
 
 ### A fix and a check are not the same deliverable
 
