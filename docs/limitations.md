@@ -105,22 +105,23 @@ The timer unit is `OnBootSec=2min`, `OnUnitActiveSec=15min`, `AccuracySec=30s`.
 the last scheduled instant, so every tick inherits the duration of the run
 before it and the schedule walks forward by a few seconds each time.
 
-Measured on this host over a 62-gap window on 2026-11-06:
+Measured on this host across 52 consecutive gaps over two journal boots:
 
     30 gaps at 930s (15m30s)
-     5 gaps at 920s
-     4 gaps at 910s
-     2 at 909s, 1 at 929s, 1 at 928s
+     5 at 920s, 5 at 910s
+     2 at 909s
+     1 each at 911, 919, 921, 928, 929
+     1 each at 903, 905, 906
 
-So the real distribution is **909–930 seconds**, and the single most common value
-is the ceiling. A check asserting "ticks land 15 minutes apart" against round
-wall-clock numbers would fail a perfectly healthy timer, and a check asserting a
-tight interval would too.
+So the real distribution is **903–930 seconds**, and the single most common value
+is the ceiling, and the floor is a fast run finishing early. A check asserting
+"ticks land 15 minutes apart" against round wall-clock numbers would fail a
+perfectly healthy timer, and a check asserting a tight interval would too.
 
 Two consequences, both of which have to be written down before the run:
 
 **1. Assert the delta between consecutive `Last` times, not the wall clock.**
-Expected range 909–930 s. Round-minute ticks will never happen.
+Expected range **903–930 s**. Round-minute ticks will never happen.
 
 **2. The daily report count has a tolerance band.** With a period that can
 stretch to 930 s plus `AccuracySec=30s` of permitted slip, a full day yields
