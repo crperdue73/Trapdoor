@@ -95,6 +95,43 @@ because something could turn red.
 So the standard for anything added to this repo is not "is it documented." It is
 **"can it go red, and has it."**
 
+### What "15 minutes apart" actually means when the timer is healthy
+
+Stated before tomorrow's measurement, because a tolerance invented after reading
+the number is not a tolerance.
+
+The timer unit is `OnBootSec=2min`, `OnUnitActiveSec=15min`, `AccuracySec=30s`.
+`OnUnitActiveSec` counts from when the service last **went active**, not from
+the last scheduled instant, so every tick inherits the duration of the run
+before it and the schedule walks forward by a few seconds each time.
+
+Measured on this host over a 62-gap window on 2026-11-06:
+
+    30 gaps at 930s (15m30s)
+     5 gaps at 920s
+     4 gaps at 910s
+     2 at 909s, 1 at 929s, 1 at 928s
+
+So the real distribution is **909–930 seconds**, and the single most common value
+is the ceiling. A check asserting "ticks land 15 minutes apart" against round
+wall-clock numbers would fail a perfectly healthy timer, and a check asserting a
+tight interval would too.
+
+Two consequences, both of which have to be written down before the run:
+
+**1. Assert the delta between consecutive `Last` times, not the wall clock.**
+Expected range 909–930 s. Round-minute ticks will never happen.
+
+**2. The daily report count has a tolerance band.** With a period that can
+stretch to 930 s plus `AccuracySec=30s` of permitted slip, a full day yields
+**93–96 reports, not 96.** 93 with a 930 s mean is arithmetic, not a fault. A
+number is only green against a stated band, and the band has to exist before the
+number does.
+
+That is the same defect this document is about, caught one step earlier: the
+first honest day of data would otherwise have been judged against a round number
+that nobody had measured.
+
 ### The witness has to want the number to be bad
 
 The readout requirement above rules out the easy monitor: a ping endpoint
