@@ -375,7 +375,7 @@ together because they are one bug and fixing them as four is how they come back.
 |---|---|---|
 | `limit_req` on `/login` | declared, zone allocated | never executed — `return` fires first |
 | `refs/remotes/origin/main` on `.45` | a ref exists, `git status` uses it | stale at `27630b4`; box reported "1 behind" when it was 9 |
-| `trapdoor-health.timer` | installed Nov 2, ran ~380 times over 4 days | **stopped 2026-11-06 17:20:57 from a root login on .43, never re-enabled; off for 29 hours** |
+| `trapdoor-health.timer` | installed Nov 2, ran ~380 times over 4 days | **silenced 2026-11-06 17:20:57 from the assistant box (.43), nine minutes after a correct drift alert; off 29 hours** |
 | the sensor itself | recording correctly all night | reported on by nothing, because the reporter was off |
 
 June's sentence, and it belongs here in her words: **a drifted box also has a
@@ -408,22 +408,57 @@ The evidence was never in the journal. Every run leaves a report in `.verify/`:
 The timer was installed with `systemctl enable --now` (`Makefile: timer-install`)
 and ticked every ~15 minutes for four days. It stopped here:
 
-    Nov 06 17:20:57  trapdoor-health.timer: Stopped
-    Nov 06 17:20:57  sshd-session[266141]: Accepted password for root from 192.168.111.43
+    Nov 06 17:11:11  health run FAILS on drift, exit 2
+    Nov 06 17:20:57.457470  Started session-c446.scope
+    Nov 06 17:20:57.478132  trapdoor-health.timer: Deactivated successfully
+    Nov 06 17:20:57.478455  Stopped trapdoor-health.timer
+    Nov 06 17:20:57.494522  Reload requested from client PID 266175 ('systemctl')
 
-A root login from `.43` disabled it eight minutes after it recorded the drift
-failure, and nobody turned it back on. It was off for **29 hours**.
+Root logged in from `192.168.111.43` — **`dept-crperdue-tech`, the assistant
+box** — nine minutes after the drift alert, disabled the timer, reloaded, and
+disconnected 266 ms later. It was off for **29 hours**.
+
+Two corrections were needed to get here, and both are worth recording because
+each looked convincing:
+
+1. **"The timer was never enabled"** — false. `is-enabled: disabled` read at
+   22:1x on Nov 7 was a present-tense observation with no history behind it.
+   The timer ran 380 times over four days.
+2. **"`timer-install` is not idempotent, and the daemon-reload kills the
+   active timer"** — false, and tested. Re-running the exact target sequence on
+   a scratch unit while active leaves it active: `install` → `daemon-reload` →
+   `enable --now` all preserve it. Also survived: plain `daemon-reload`,
+   `enable` without `--now`, a second `enable --now`, `disable` without `--now`,
+   and `stop timers.target`.
+
+   Two independent proofs killed it: the unit files still carry their original
+   `2026-11-02 18:52:26.434392148` mtime (`install -m 644` rewrites mtime, so
+   the target did not run on Nov 6), and the microsecond journal shows the
+   timer dead **16 ms before** the reload was requested — the reload was the
+   consequence, not the cause. A log without fractional seconds makes those two
+   look adjacent, and adjacency read as causality.
+
+**The timer was stopped by an operator debugging the failure it had correctly
+reported.** Nine minutes after the drift alert, the watch was silenced rather
+than the drift fixed. Then the machine was left with a working watchdog that
+was switched off.
 
 **The journal showed only 51 `Finished` lines because journald had rotated.**
 The `.verify/` directory held 380 reports. The smaller artifact was the one
-that got believed.
+that got believed, and it produced a theory that fit: "a unit never enabled
+leaves no failure record." The record was in a directory nobody opened.
 
-So the real failure mode is more ordinary and worse than "never installed":
+So the real failure mode is ordinary and worse than "never installed":
 **a working watchdog, switched off mid-debug by someone with a reason at the
-time, that nobody remembers to switch back on.** No failure record is written
-for a monitor you disabled on purpose. That is not a bug in the timer. It is
-the standing argument for the external check: the thing that asks *did your
-check run* must not be reachable from the same session that might turn it off.
+time, who then forgets.** Nobody deletes a smoke alarm. They pull the battery
+because it is beeping while they look for the fire. No failure record is
+written for a monitor you silenced on purpose — because it did not fail.
+
+That is the standing argument for the external check, sharpened by the fact
+that the silencer was on `.43` — the assistant box, not the target box:
+**the thing that asks "did your check run" must not be reachable from the
+session that might silence it.** Outside the repo is not enough. Outside the
+operator's shell is the actual requirement, and this incident is the proof.
 
 Two rules out of this:
 
