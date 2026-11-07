@@ -66,6 +66,26 @@ else
     else
         LOCAL=$(git rev-parse HEAD 2>/dev/null || echo "")
         REMOTE=$(git rev-parse "origin/${BRANCH}" 2>/dev/null || echo "")
+
+        # Why there is no "is the ref stale?" check here, tried and removed on
+        # 2026-11-07:
+        #
+        # June proposed refusing to report when the last fetch is old. Sound
+        # instinct, but the fetch three lines above runs on every invocation, so
+        # a FETCH_HEAD age test measures the fetch that just happened and can
+        # never fail. It was written, it was proved tautological by freezing
+        # FETCH_HEAD and watching it pass anyway, and it was removed.
+        #
+        # The real question is not "how old is the ref" but "did the fetch reach
+        # the remote" -- and that is already handled: a failed fetch leaves
+        # FETCH_HEAD untouched (verified against an unreachable host, mtime
+        # unchanged), and the `if ! git fetch` above turns that into skip/NOT RUN.
+        #
+        # The 2026-11-07 incident was not a stale ref in this script. This script
+        # always fetched. The stale ref was in `git status`, which nobody had run
+        # fetch behind. That is why the box's own report said "1 behind" and the
+        # truth was 9. The fix for that is this script existing and being the
+        # thing that reports drift -- not another age gate on top of it.
         if [[ -z "$LOCAL" || -z "$REMOTE" ]]; then
             skip "could not resolve both revisions, NOT a verdict"
         elif [[ "$LOCAL" == "$REMOTE" ]]; then
