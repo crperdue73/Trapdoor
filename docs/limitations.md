@@ -12,17 +12,17 @@ this repository by the two people maintaining it — including several that were
 written down and committed. **Every single one was caught by the other person,
 or by a test the other person insisted on. None was caught by its author.**
 
-| Claim | Who made it | How it died |
-|---|---|---|
-| sandbox sensor isn't logging | one maintainer | the other sampled a buffered writer and the write appeared |
-| health file doesn't exist | one maintainer | `stat` raced the writer |
-| `limit_req` is throttling | one maintainer | a 200-request probe, zero 429s |
-| the watchdog timer was never enabled | one maintainer | `.verify/` held 380 reports |
-| `timer-install` isn't idempotent | one maintainer | a six-variant scratch test |
-| "someone on `.43` disabled it" | one maintainer | it was her own debug harness |
-| it was eight minutes | one maintainer | the other counted: 9m46s |
-| the event count proves the sensor works | **both** | a corpse dated eight days back |
-| the ledger section exists in `cefdc9a` | one maintainer | `git show --stat` — the message described it, the diff didn't have it |
+| Claim | Who made it | How it died | Violated again after being written down |
+|---|---|---|---|
+| sandbox sensor isn't logging | one maintainer | the other sampled a buffered writer and the write appeared | yes — one sample of a batched writer, again |
+| health file doesn't exist | one maintainer | `stat` raced the writer | no |
+| `limit_req` is throttling | one maintainer | a 200-request probe, zero 429s | no |
+| the watchdog timer was never enabled | one maintainer | `.verify/` held 380 reports | no |
+| `timer-install` isn't idempotent | one maintainer | a six-variant scratch test | no |
+| "someone on `.43` disabled it" | one maintainer | it was her own debug harness | no |
+| it was eight minutes | one maintainer | the other counted: 9m46s | no |
+| the event count proves the sensor works | **both** | a corpse dated eight days back | yes — "2 samples, 4 min apart" offered as live evidence |
+| the ledger section exists in `cefdc9a` | one maintainer | `git show --stat` — the message described it, the diff didn't have it | no |
 
 (Names are left out on purpose: naming who was wrong eight times turns a spec
 back into a confession, and the roles had reversed within hours anyway.)
@@ -68,6 +68,49 @@ it.**
 The command is one flag. `git log --oneline -1 <sha>` prints the claim;
 `git show --stat <sha>` prints what the commit did. Both were available. Only
 one of them can come back red.
+
+### Every rule in this document has a violation that postdates its own writing
+
+The last column of that table is the argument. Not every row, but four of the
+nine, and the four are the ones we were proudest of writing down:
+
+- "one sample of a batched writer is not a measurement" — written in this file,
+  violated the same evening by quoting two event counts four minutes apart as
+  evidence that the sensor was alive.
+- "the thing that reports is not the thing that runs" — written in this file,
+  violated the same evening by a commit message describing a section its diff
+  did not contain.
+- "check the exit code of the command that mattered" — written in a message,
+  while the chained shell line that broke it was already in the transcript.
+- "a running watchdog is not a checked watchdog" — the whole premise of this
+  document, broken by a four-day streak nobody read.
+
+**A rule you can quote is not yet a rule you apply.** That is not a meta
+observation; it is the empirical result of this week. Prose does not survive
+contact with a tired operator at 22:00, and every rule above that stayed
+written-only was broken within hours of being written. The ones that held —
+`-s` becoming a stated limitation, the drift check, the syntax test — held
+because something could turn red.
+
+So the standard for anything added to this repo is not "is it documented." It is
+**"can it go red, and has it."**
+
+### The witness has to want the number to be bad
+
+The readout requirement above rules out the easy monitor: a ping endpoint
+answering "last heartbeat 22:43:52" is a summary, a reader cannot re-run it, and
+a reader who cannot re-run it is not a witness. But the harder test is not
+structural. It is about motive.
+
+**Every check built tonight worked because the person running it wanted to find
+the problem.** That is the whole reason they functioned. A check run by somebody
+hoping it passes is a formality with a green light on it.
+
+So the specification for the external witness is not "a neutral third party."
+Neutral is not enough and is easy to fake. It is **somebody with a reason to
+want the number to be bad** — which is precisely what neither maintainer of this
+repository can be about their own work, and precisely why this cannot be solved
+from inside.
 
 ### A fix and a check are not the same deliverable
 
@@ -453,7 +496,7 @@ has no rate limit and the README must not claim one.**
 
 On 2026-11-06 the drift check fired at **17:11:11**. It was right. It exit-2'd,
 wrote a durable artifact naming its own branch point, and alarmed on schedule.
-The timer was silenced at **17:20:57**. Nine minutes.
+The timer was silenced at **17:20:57**. Nine minutes forty-six seconds.
 
 **Every piece of the system worked.** The checker detected real drift, reported
 it correctly, persisted the evidence, and alarmed on time. What failed was the
@@ -536,7 +579,7 @@ each looked convincing:
    look adjacent, and adjacency read as causality.
 
 **The timer was stopped by an operator debugging the failure it had correctly
-reported.** Nine minutes after the drift alert, the watch was silenced rather
+reported.** Nine minutes forty-six seconds after the drift alert, the watch was silenced rather
 than the drift fixed. Then the machine was left with a working watchdog that
 was switched off.
 
