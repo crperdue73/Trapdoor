@@ -10,3 +10,7 @@ __pycache__/
 
 # git credential store on the deployment box (contains a token)
 .git-creds
+
+# stray capture files from debugging sessions (accidentally committed in bc726d2)
+err.txt
+out.txt
