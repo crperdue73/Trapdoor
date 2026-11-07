@@ -10,7 +10,7 @@ COMPOSE := docker compose
 # target names. `scenario/ssh-bruteforce` worked, but a slash in a target is
 # read as a path by anyone who has written a Makefile, it tab-completes badly,
 # and `make help` could not list the scenarios it supported.
-SCENARIOS := ssh-bruteforce web-scan nmap
+SCENARIOS := ssh-bruteforce web-scan
 
 .PHONY: help up down restart logs ps events sessions scenario firewall test \
         clean verify deploy drift health timer-install timer-remove
