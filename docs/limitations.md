@@ -340,8 +340,14 @@ And measured, the cost of that gap. June drove 300 parallel requests and read
 the log before and after:
 
 - 300 requests → 300 new lines in `out/events.jsonl`, one-for-one, ~100 KB.
+- **Approximate**, and the label matters: June and I both measured this by
+  reading a file Docker was still appending to. A sample of a buffered writer
+  is not a measurement of its contents. The per-request figure is the right
+  order of magnitude and the projection that follows holds; the third digit
+  does not exist. Re-measure quiesced before anyone quotes this with
+  confidence.
 - ~330 bytes per request, no ceiling of any kind.
-- rockyou is 14,344,391 entries. At 330 B each that is **~4.7 GB from one
+- rockyou is 14,344,391 entries. At that rate it is **~4.7 GB from one
 demo, on one path.**
 
 The file it fills is `out/events.jsonl`, which is the file retention cannot see
@@ -369,7 +375,7 @@ together because they are one bug and fixing them as four is how they come back.
 |---|---|---|
 | `limit_req` on `/login` | declared, zone allocated | never executed — `return` fires first |
 | `refs/remotes/origin/main` on `.45` | a ref exists, `git status` uses it | stale at `27630b4`; box reported "1 behind" when it was 9 |
-| `trapdoor-health.timer` | installed, unit file present | never enabled; failed 2026-11-06 17:11 and stayed off |
+| `trapdoor-health.timer` | installed Nov 2, ran ~380 times over 4 days | **stopped 2026-11-06 17:20:57 from a root login on .43, never re-enabled; off for 29 hours** |
 | the sensor itself | recording correctly all night | reported on by nothing, because the reporter was off |
 
 June's sentence, and it belongs here in her words: **a drifted box also has a
@@ -381,6 +387,53 @@ The last row is the one that hurts. The sensor was never broken. June's 300
 requests produced 300 entries, one-for-one, with `src_ip`, `http_path` and
 `http_status`. A perfect instrument with a dead readout is not a working
 instrument — it is a recording nobody will ever watch.
+
+### Correction, 2026-11-07 22:40 — the timer was not "never enabled"
+
+An earlier draft of this section claimed the timer had never been enabled and
+that its single run on Nov 6 was a hand-start. **That was wrong, and it was
+wrong because of the same defect the section describes.**
+
+The evidence was never in the journal. Every run leaves a report in `.verify/`:
+
+| Day | Reports | First | Last |
+|---|---|---|---|
+| Nov 02 | 27 | 18:52 (install) | — |
+| Nov 03 | 94 | 00:00:41 | 23:54:41 |
+| Nov 04 | 93 | 00:19 | 23:49 |
+| Nov 05 | 95 | 00:04:41 | 23:59:11 |
+| Nov 06 | 68 | 00:10:38 | **17:11:11** |
+| Nov 07 | 2 | 22:13:40 | 22:13:52 |
+
+The timer was installed with `systemctl enable --now` (`Makefile: timer-install`)
+and ticked every ~15 minutes for four days. It stopped here:
+
+    Nov 06 17:20:57  trapdoor-health.timer: Stopped
+    Nov 06 17:20:57  sshd-session[266141]: Accepted password for root from 192.168.111.43
+
+A root login from `.43` disabled it eight minutes after it recorded the drift
+failure, and nobody turned it back on. It was off for **29 hours**.
+
+**The journal showed only 51 `Finished` lines because journald had rotated.**
+The `.verify/` directory held 380 reports. The smaller artifact was the one
+that got believed.
+
+So the real failure mode is more ordinary and worse than "never installed":
+**a working watchdog, switched off mid-debug by someone with a reason at the
+time, that nobody remembers to switch back on.** No failure record is written
+for a monitor you disabled on purpose. That is not a bug in the timer. It is
+the standing argument for the external check: the thing that asks *did your
+check run* must not be reachable from the same session that might turn it off.
+
+Two rules out of this:
+
+1. **Before quoting a count from any log, ask what the log's own coverage is.**
+   `journalctl --list-boots`, oldest file in a directory, the shipper's
+   `RETENTION_DAYS`. A count is meaningless without its window. 51 and 380
+   are the same data over different windows, and only one of them was true.
+2. **The checker's output directory is better evidence than the supervisor's
+   log.** The log can rotate; the artifacts persist. Check the thing the check
+   wrote, not the record that it was invited to run.
 
 **The fix is not in this repo, and cannot be.** Every one of these four is a
 thing whose health is only knowable by asking a different process. A repo-owned
