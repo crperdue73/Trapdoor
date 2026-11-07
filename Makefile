@@ -94,9 +94,14 @@ scenario:
 firewall:
 	@./scripts/firewall.sh --print
 
+# G2: a syntax error shipped once and made the containment proof unparsable
+# from the commit that claimed containment until 14c67d8. `bash -n` was what
+# found it, and it was run by hand. It runs here now, over every script in the
+# tree, because `make test` is the thing people actually run before a push.
 test:
 	@python3 tests/test_shipper.py
 	@python3 tests/test_docs.py
+	@bash tests/test_syntax.sh
 
 # --- verification ---------------------------------------------------------
 

@@ -8,11 +8,32 @@ This file is the acceptance list. It is split into two halves on purpose:
 
 - **Part 1 — proven.** Demonstrated on the live host, with the artifact that
   demonstrated it named.
-- **Part 2 — not proven.** Named gaps, including the one that matters most:
-  `scripts/firewall.sh --apply` **has never executed on a host with root.**
+- **Part 2 — not proven.** Named gaps.
 
 A claim moves from Part 2 to Part 1 only when someone ran the thing and kept
 the output. Writing it down differently does not move it.
+
+**Every Part 1 row carries the date it was last observed.** A proof is a
+statement about a box at a time, not a property of the box forever. Rows marked
+*re-observed 2026-11-07* were checked from off-box on that date and the output
+is quoted below; rows with an earlier date rest on the artifact recorded then
+and have not been re-run since. If you are reading this months later, do not
+assume a row is still true — the date is there so you can tell.
+
+What was re-observed on 2026-11-07, from this host (`.10`, off-box, read-only):
+
+```
+GET /                 -> 200      GET /nope-xyz       -> 404
+GET /.env             -> 403      GET /.git/config    -> 403
+GET /.aws/credentials -> 403      GET /wp-login.php   -> 403
+nc .45 2222           -> SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u2
+```
+
+That is C1–C6 and A6, five days after they were first written,
+against a box nobody had re-probed in between. It is also the extent of what
+can be checked without root and without the stack's event log: A1–A3, A8, and
+everything that reads `out/events.jsonl` were **not** re-observed, because
+`out/` on this checkout is empty except `out/g1/` and there is no `.env` here.
 
 Run order: `scripts/verify.sh` first (it checks the platform), then the
 scenarios (they check the behaviour). Both exit non-zero on an unmet claim.
@@ -30,17 +51,21 @@ Host `192.168.111.45`. Evidence directory `out/` and `.verify/`.
 
 ### A. Platform — `scripts/verify.sh`
 
+Observed **2026-11-02** from the live host, except A4/A5/A6 re-observed
+**2026-11-07** from `.10` (off-box). A1–A3, A7, A8 were not re-observed on
+2026-11-07: they need the stack and its event log, and `out/` is empty here.
+
 | # | Claim | Evidence |
 |---|-------|----------|
-| A1 | The decoy ports are bound to `LAB_BIND_IP`, not `0.0.0.0` | `ss -tlnp` shows `192.168.111.45:2222`, `:2223`, `:8080` |
-| A2 | Nothing else opened a listener while the stack started | before/after `ss -tlnp` diff is empty |
-| A3 | No published port is on a wildcard address | wildcard grep returns nothing for our ports |
-| A4 | The web decoy is up and answering | `GET /` → 200 |
-| A5 | The bait is present and deliberately forbidden | `GET /.env` → 403 |
-| A6 | SSH is being emulated | banner matches `SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u2` |
-| A7 | The pipeline normalizes events | `out/events.jsonl` parses, sensors = `cowrie` + `nginx` |
-| A8 | All three services run | `docker compose ps` lists cowrie, web, shipper |
-| A9 | The honeypot cannot reach the LAN | from inside cowrie, a request to `192.168.0.1` fails |
+| A1 | The decoy ports are bound to `LAB_BIND_IP`, not `0.0.0.0` | `ss -tlnp` shows `192.168.111.45:2222`, `:2223`, `:8080` (2026-11-02) |
+| A2 | Nothing else opened a listener while the stack started | before/after `ss -tlnp` diff is empty (2026-11-02) |
+| A3 | No published port is on a wildcard address | wildcard grep returns nothing for our ports (2026-11-02) |
+| A4 | The web decoy is up and answering | `GET /` → 200 — **re-observed 2026-11-07** |
+| A5 | The bait is present and deliberately forbidden | `GET /.env` → 403 — **re-observed 2026-11-07** |
+| A6 | SSH is being emulated | banner matches `SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u2` — **re-observed 2026-11-07** |
+| A7 | The pipeline normalizes events | `out/events.jsonl` parses, sensors = `cowrie` + `nginx` (2026-11-02) |
+| A8 | All three services run | `docker compose ps` lists cowrie, web, shipper (2026-11-02) |
+| A9 | The honeypot cannot reach the LAN | from inside cowrie, a request to `192.168.0.1` fails (2026-11-02) |
 
 **A1 and A9 are the two that matter.** A1 because a wrong bind is silent and
 fatal — Docker publishes wide and no host firewall rule saves it, since Docker
@@ -74,16 +99,19 @@ another person, describe the method and the search path, not the string.
 
 ### C. Web scanner — `scenarios/web-scan.sh`
 
+C1–C6 **re-observed 2026-11-07** by direct off-box probe; C7–C8 on 2026-11-02
+from the event log (not re-observed — no `out/events.jsonl` on this checkout).
+
 | # | Claim | Evidence |
 |---|-------|----------|
-| C1 | The decoy is an ordinary web server | `GET /` → 200 |
-| C2 | Secret paths exist but are forbidden | `GET /.env` → 403, not 404 |
-| C3 | VCS paths are forbidden | `GET /.git/config` → 403 |
-| C4 | Cloud credential paths are forbidden | `GET /.aws/credentials` → 403 |
-| C5 | CMS paths are forbidden | `GET /wp-login.php` → 403 |
-| C6 | A genuinely absent path is 404 | random path → 404 |
-| C7 | Requests are logged with path and status | `sensor == "nginx"` in `out/events.jsonl`, `http_status` populated |
-| C8 | Request bodies are not stored | `payload_sha256` is null for nginx events |
+| C1 | The decoy is an ordinary web server | `GET /` → 200 — re-observed 2026-11-07 |
+| C2 | Secret paths exist but are forbidden | `GET /.env` → 403, not 404 — re-observed 2026-11-07 |
+| C3 | VCS paths are forbidden | `GET /.git/config` → 403 — re-observed 2026-11-07 |
+| C4 | Cloud credential paths are forbidden | `GET /.aws/credentials` → 403 — re-observed 2026-11-07 |
+| C5 | CMS paths are forbidden | `GET /wp-login.php` → 403 — re-observed 2026-11-07 |
+| C6 | A genuinely absent path is 404 | random path → 404 — re-observed 2026-11-07 |
+| C7 | Requests are logged with path and status | `sensor == "nginx"` in `out/events.jsonl`, `http_status` populated (2026-11-02) |
+| C8 | Request bodies are not stored | `payload_sha256` is null for nginx events (2026-11-02) |
 
 C2–C5 matter most. 403 rather than 404 because a scanner that sees "exists but
 forbidden" keeps probing and generates a transcript; a scanner that sees 404
@@ -196,16 +224,49 @@ unreachability probe for A9. An `OK` there with **no** accompanying
 `REFUSED`/`UNREACHABLE` line means the probe broke, not that containment
 holds. Read the line, not the verdict.
 
-### ⚠️ G2 — the containment proof's own history
+### ✅ G2 — a syntax break can no longer ship
 
-`firewall.sh` carried two defects (a stray `fi`, and `$BRIDGES` used three
-times with its declaration deleted) that made the containment proof
-**unparsable from the commit that claimed containment** until `14c67d8`. The
-claim was true-looking and uncheckable for two days.
+**Closed 2026-11-07.** `make test` now runs `tests/test_syntax.sh`, which
+`bash -n`s every `.sh` in the tree and exits non-zero on any that fails.
 
-**To close:** a lint step in `make check` that `bash -n`s every script, so a
-syntax break cannot ship again. The lesson is not "test more" — it is that a
-thing which cannot be parsed cannot disagree with you.
+Proven both ways, in the order that matters — first that it is green on the
+real tree, then that it goes red on the real defect:
+
+```
+$ make test                      # clean tree
+PASS  8 shell scripts parse (parsing is not running)   -> exit 0
+
+$ sed -i '... append a stray fi ...' scripts/firewall.sh
+$ make test                      # the 14c67d8 defect, reintroduced
+FAIL  ./scripts/firewall.sh
+      ./scripts/firewall.sh: line 89: syntax error near unexpected token `fi'
+                                                     -> exit 1
+```
+
+The script is restored by checksum afterward (`f9556889…`), not by memory.
+
+**The history, kept because the shape is the lesson.** `firewall.sh` carried
+two defects — a stray `fi`, and `$BRIDGES` used three times with its
+declaration deleted — and between them the containment proof was unparsable.
+It was fixed in `14c67d8`, and the fix commit says so plainly.
+
+**Correction, 2026-11-07:** the claim that this lasted "from the commit that
+claimed containment" is not supported by the repository. I re-parsed every
+version of every `.sh` at all 58 commits (`git show <c>:<path> | bash -n`).
+Every committed version of `firewall.sh` parses. The break existed in a
+**working-tree state that was never committed** — so no commit message and no
+acceptance row ever rested on an unparsable script. What was true is narrower
+and still bad: the author of the fix could not parse the file in front of her,
+she found that by hand, and nothing in `make test` would have said so.
+
+Not claiming the stronger version matters. An acceptance file that overstates
+its own history has stopped being evidence, and this row was doing exactly
+what the rest of the file warns about.
+
+**What this does not prove:** that any script is correct, or that it will work
+when run. `firewall.sh --apply` can parse and still write a rule that matches
+no packet — that was G1b, and parsing would have called it green. Parsing is
+not running, and this row closes parsing only.
 
 ### G3 — not claimed: the deployment is secure
 
