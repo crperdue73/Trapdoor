@@ -3,6 +3,57 @@
 Writing these down as they are found, not at the end when it looks tidy.
 A limitation discovered during a class and not in the docs is a bug report.
 
+## How these were found, stated up front
+
+**A specification for how this work gets checked, not a confession.**
+
+Between 2026-11-01 and 2026-11-07, eight separate wrong claims were made about
+this repository by the two people maintaining it — including several that were
+written down and committed. **Every single one was caught by the other person,
+or by a test the other person insisted on. None was caught by its author.**
+
+| Claim | Who made it | How it died |
+|---|---|---|
+| sandbox sensor isn't logging | one maintainer | the other sampled a buffered writer and the write appeared |
+| health file doesn't exist | one maintainer | `stat` raced the writer |
+| `limit_req` is throttling | one maintainer | a 200-request probe, zero 429s |
+| the watchdog timer was never enabled | one maintainer | `.verify/` held 380 reports |
+| `timer-install` isn't idempotent | one maintainer | a six-variant scratch test |
+| "someone on `.43` disabled it" | one maintainer | it was her own debug harness |
+| it was eight minutes | one maintainer | the other counted: 9m46s |
+| the event count proves the sensor works | **both** | a corpse dated eight days back |
+
+(Names are left out on purpose: naming who was wrong eight times turns a spec
+back into a confession, and the roles had reversed within hours anyway.)
+
+The distribution matters more than the number. **Eight claims, six days, zero
+caught by their author — and both parties were actively trying to find errors
+for the entire window.** Not one tired person guessing. Two people hunting hard,
+in each other's work, and still zero self-caught.
+
+Which is why the external liveness check in this document is not a monitoring
+nicety. **An author cannot see their own error by trying harder.** These were
+not missed for lack of effort; several were made by someone actively hunting for
+errors, and they were invisible from that seat. "You should have a third party
+read your alarm" is an opinion. **"Two people spent a week trying to break each
+other's work and caught none of their own" is a measurement, and it is in this
+repository.**
+
+### A fix and a check are not the same deliverable
+
+> **A fix and a check are not the same deliverable, and shipping the fix as
+> though it were the check is how the last five got in.**
+
+A fix restores the behavior. A check gives you a way to know it stayed
+restored. Shipping the first and calling it the second produces a repo where
+correctness is assumed and only detectable when it's wrong again.
+
+This cost a deliberate decision. The event-count recency check is ten lines and
+could have shipped the same night it was found. It was not written, because a
+check that has never been red is a check whose green means nothing. It is a
+named gap below instead — **a document that says "unproven" beats a check that
+says "OK."**
+
 ## Telemetry
 
 **HTTP request bodies are not hashed.**
