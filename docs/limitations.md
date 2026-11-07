@@ -499,10 +499,20 @@ Proven by construction, not argued: an `events.jsonl` containing 8 events dated
     OK  8 events (python3 parser), sensors: cowrie=5 nginx=3
     OK  every event line is valid JSON
 
-Two green OKs from a sensor that has been dead for eight days. **A health check
+The transcript, verbatim, because a reader skims prose and stops at output:
+
+    $ events.jsonl: 8 events, all dated 2026-10-30, mtime set to the epoch
+    $ ./scripts/verify.sh
+    OK  8 events (python3 parser), sensors: cowrie=5 nginx=3
+    OK  every event line is valid JSON
+
+Two green OKs over a corpse. The only guard before that block is `verify.sh:126`:
+
+    if [[ ! -s out/events.jsonl ]]; then
+
+**`-s` tests non-empty. A corpse with one byte in it passes.** A health check
 that reports green on a system which has quietly stopped emitting events is
-green.** The check is asking "is there a log" when the question is "is the log
-growing."
+green: it is asking "is there a log" when the question is "is the log growing".
 
 That is the timer failure one layer down, and it is the same defect shape as
 everything else in this document: a number read as a fact. `8539 events` reads
