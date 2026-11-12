@@ -25,7 +25,7 @@ What was re-observed on 2026-11-07, from this host (`.10`, off-box, read-only):
 ```
 GET /                 -> 200      GET /nope-xyz       -> 404
 GET /.env             -> 403      GET /.git/config    -> 403
-GET /.aws/credentials -> 403      GET /wp-login.php   -> 403
+GET /.aws/credentials -> 403      GET /.wp-login.php  -> 403
 nc .45 2222           -> SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u2
 ```
 
@@ -42,6 +42,35 @@ scenarios (they check the behaviour). Both exit non-zero on an unmet claim.
 A check that cannot run has proven nothing. This sentence exists because the
 containment proof in this repo was unparsable for two days while the commit
 message said containment was proved.
+
+---
+
+## Evidence is not in the repository
+
+`.gitignore` excludes `out/` and `.verify/`:
+
+```
+.env
+out/
+*.jsonl
+*.log
+.verify/
+```
+
+So every row below whose evidence names a file under `out/` or `.verify/` is
+citing something **on the host**, not something a reader of this repo can open.
+The claim can still be true; it cannot be independently checked from a clone.
+That is a deliberate trade (log files and a `.env` hold lab data and a token),
+and it has a cost that this file should state rather than bury:
+
+- the reader has to trust the person who ran it, or re-run it themselves
+- a row's evidence can vanish with the host and nothing will notice
+- "the output is in `out/g1/`" is a claim about a directory, and on this
+  checkout **that directory exists and is empty** (see G1a)
+
+Where a result matters enough to be argued about, quote the output in this
+file and quote it in full. A named path is a pointer to evidence; a quoted
+transcript is evidence.
 
 ---
 
@@ -72,16 +101,27 @@ fatal — Docker publishes wide and no host firewall rule saves it, since Docker
 writes its own rules ahead of ours. A9 because a network policy you have not
 tested is a network policy you do not have.
 
+A1 has a second life outside this table: `.env.example` ships
+`LAB_BIND_IP=0.0.0.0` with the comment "Default 0.0.0.0 is convenient; in a
+real lab set this to the LXC's lab-facing address". Copying the example and
+stopping there reproduces exactly the failure A1 exists to catch. The row
+proves the *host* was configured correctly on 2026-11-02. It proves nothing
+about the next person who copies the example.
+
 ### B. SSH brute-force — `scenarios/ssh-bruteforce.sh`
 
 | # | Claim | Evidence |
 |---|-------|----------|
 | B1 | An unauthenticated TCP connect to `:2222` returns an SSH banner | `nc` shows `SSH-2.0-...` |
-| B2 | A rejected credential is logged with its username | `event: auth_failed` with `username` populated (Cowrie logs it as `cowrie.login.failed`) |
-| B3 | An accepted credential is logged | `event: auth_success` for `root` (Cowrie: `cowrie.login.success`) |
+| B2 | A rejected credential is logged with its username | `event: auth_failed` with `username` populated (Cowrie logs it natively as `cowrie.login.failed`) |
+| B3 | An accepted credential is logged | `event: auth_success` for `root` (Cowrie logs it natively as `cowrie.login.success`) |
 | B4 | Commands typed in the shell are logged individually | `event: command` × 5 in order (`id`, `uname`, `cat`, `ls`, `echo`) |
 | B5 | No command typed reaches the host | `scripts/containment-check.sh` exits 0 |
 | B6 | The run is identical each time | same event order, same usernames, same count |
+
+B2–B6 rest on runs made **before 2026-11-07**; they need the stack and its
+event log, and neither is on this checkout. Only B1 is reproducible off-box
+without root, and A6 covers the same measurement.
 
 **B5 is the one that matters.** It is the difference between a decoy and a
 vulnerable server.
@@ -136,12 +176,165 @@ this script emits would be present, reachable, correct, and do nothing. The
 decoy is open to the whole /16, and the only reason it is not open to the
 internet is that the farm is triple-NATed.
 
+### E. Acceptance rows that are checked by `make test`, not by a host
+
+`make test` runs three things: `tests/test_shipper.py` (17 normalization
+cases), `tests/test_docs.py` (docs agree with `schema/event.schema.json`), and
+`tests/test_syntax.sh` (every `.sh` parses). Verified on this checkout,
+2026-11-12:
+
+```
+$ make test
+...
+17 passed, 0 failed
+PASS  docs agree with schema/event.schema.json
+PASS  8 shell scripts parse (parsing is not running)
+exit 0
+```
+
+What that buys: the normalizer's behaviour on 17 known inputs, the absence of
+drift between docs and schema, and the absence of syntax breaks. What it does
+not buy: anything about a running stack. This row is here so nobody reads a
+green `make test` as a deployment verdict. It is a pre-push check.
+
 ---
 
 ## Part 2 — NOT proven
 
 These are stated so nobody reads Part 1 as more than it is. Each one has a
 line saying what would close it.
+
+### ⚠️ G1a — `firewall.sh --apply`: the code path ran, the evidence is gone
+
+**Open gap: the 2026-11-06 `--apply` run cannot be re-verified from this
+checkout (`out/g1/` is empty). One defect claim inside this row is DISPROVED,
+not open — see the status line below.**
+
+**Claimed closed 2026-11-06 on `test-trapdoor`, as root.** Kept in Part 2
+because the artifact this file cites for it cannot be produced from the
+repository, and on this checkout it cannot be produced at all.
+
+What the closing run reported, per the commit and this file as originally
+written: the backup was written and readable, the teardown loop converged, the
+bridge enumeration returned `172.17.0.1 172.22.0.1 172.23.0.1`, the post-apply
+probes passed with the DROP in the chain, and a second `--apply` diffed clean
+against the first.
+
+What a reader can check from here today:
+
+```
+$ ls -la out/g1/
+total 8
+drwxr-xr-x 2 root root 4096 Nov  6 07:43 .
+drwxr-xr-x 3 root root 4096 Nov  6 07:43 ..
+```
+
+Empty. `out/` is gitignored, so the evidence was never in the repo to begin
+with, and the copy on this checkout has nothing in it. **An empty directory
+reads exactly like a directory whose evidence was lost.** It does not read like
+a proof.
+
+That does not make the run false. It makes the run **unverifiable from here**,
+and it means this row is resting on a commit message. `docs/limitations.md`
+spends its length on why a commit message is not a statement about the file.
+The same rule applies to a commit message about a directory.
+
+**How to close it again, durably:** on a host with root, run
+
+```bash
+bash scripts/firewall.sh            # read the printed report first
+bash scripts/firewall.sh --apply
+bash scripts/verify.sh
+iptables -S DOCKER-USER > /tmp/apply-1.rules
+bash scripts/firewall.sh --apply
+iptables -S DOCKER-USER > /tmp/apply-2.rules
+diff /tmp/apply-1.rules /tmp/apply-2.rules && echo IDEMPOTENT
+```
+
+then paste the whole transcript into this file, or into a `docs/g1-*` file that
+is not gitignored. Closing it a second time with another empty `out/` directory
+would close nothing.
+
+**A defect claim in this row that I made and then disproved (2026-11-12).**
+**Status: DISPROVED (2026-11-12). Not a live defect. Do not cite this as a bug.**
+
+The claim, kept verbatim as history rather than as a finding:
+
+While writing this row I asserted that `scripts/firewall.sh` could not print its
+report on a tree with no `.env`, because the line
+
+```bash
+[[ -f .env ]] && source .env
+```
+
+sits above the `if ! $APPLY` and, under `set -euo pipefail`, an unmatched
+`[[ ]]` would exit the script. **I tested that and it is false.**
+
+The claim is disproved on the same box in one command, and the reason is worth
+knowing because it fools people who reason about `set -e` from memory:
+
+```
+$ bash -c 'set -euo pipefail; [[ -f nope ]] && echo yes; echo "reached"'
+reached
+rc=0                     <- the && does NOT trigger set -e mid-script
+
+$ bash -c 'set -euo pipefail; [[ -f nope ]] && echo yes'
+rc=1                     <- it does when it is the LAST statement
+```
+
+`set -e` does not act on the left side of `&&` or `||`, and the compound's
+non-zero status only matters if that compound is the script's final statement.
+In `firewall.sh` it is not; execution falls through to the report.
+
+The end-to-end check, run in a scratch directory containing only `scripts/`
+and no `.env`, with an empty environment:
+
+```
+$ env -i PATH=/usr/bin:/bin bash scripts/firewall.sh >out.txt 2>err.txt; echo rc=$?
+rc=0          stdout: 60 lines (the full report)      stderr: empty
+```
+
+The report printed and the script exited 0. So the dry-run workflow
+`docs/DEPLOY.md` depends on works on a fresh clone, and this row's job is to
+say that plainly rather than leave a wrong defect report in the file.
+
+**What this cost and why it is written down:** the wrong version was in this
+file for one edit. It was caught by running the script instead of reading it,
+which is rule 3 in this file turned on the person writing the file. Nine wrong
+claims in `docs/limitations.md` now include a tenth, and this is the tenth: I
+reasoned about `set -e` from memory, wrote it as a proven property, and quoted
+a test I had not run. The quoted one-liner as originally written would in fact
+have printed `reached` with `rc=0`, which is the opposite of what I needed it
+to show.
+
+**The still-open part of G1a is only this:** the 2026-11-06 run cannot be
+re-verified from this checkout, and `out/g1/` is empty. That is the whole gap.
+Nothing else in this row is a known defect.
+
+Two other defects known from the closing run are documented in
+`docs/g1-findings-2026-11-06.md` (both inside the unquoted heredoc that produces
+the report), and the first `verify.sh` after applying printed
+`no TRAPDOOR rules applied` because check 7 grepped the ruleset for a string no
+rule contained.
+
+**The original gap, kept because the shape is the lesson:** everything in
+`firewall.sh` from the `== applying ==` banner to `applied and verified.` was a
+claim about a code path nobody had executed. It parsed (`bash -n` clean,
+`set -euo pipefail`), and parsing is not running. The unproven items were: the
+`iptables-save` backup existing and being readable when needed; the
+`iptables -D DOCKER-USER` teardown converging on a re-run; the bridge
+enumeration returning both `docker0` and `br-*`; the post-apply probes passing
+with the DROP actually in the chain; and idempotence.
+
+**Note what closing it did not buy.** The code path works. On the day it was
+closed, the rule it wrote still did not reach the traffic, which was G1b,
+resolved via G1c. Apply succeeding and apply enforcing are different claims,
+and this file treats them as different claims now.
+
+**A specific warning for whoever runs it:** `verify.sh` check 6 is the
+unreachability probe for A9. An `OK` there with **no** accompanying
+`REFUSED`/`UNREACHABLE` line means the probe broke, not that containment
+holds. Read the line, not the verdict.
 
 ### ✅ G1c — a TRAPDOOR rule has denied a packet
 
@@ -156,9 +349,13 @@ From `.43`: request returns `000`, counter **7**. From `.45`: `200`.
 Selective denial, measured both directions.
 
 Getting there took four defects, each of which made the previous fix look
-correct — the heredoc, check 7's grep, the wrong destination field, and
+correct: the heredoc, check 7's grep, the wrong destination field, and
 `-A` appending below Docker's own `RETURN`. Two of the four were answered by
 the same observation: **a rule that is present is not a rule that matches.**
+
+This row is quoted rather than pointed at, which is why it stays in Part 1. It
+is also a hand-inserted rule, not a rule emitted by `firewall.sh`, which is
+exactly why G1a stays open above.
 
 ### ⚠️ G1b — DOCKER-USER was not in the decoy's packet path on `.45` (RESOLVED)
 
@@ -172,65 +369,17 @@ The one test that settled it was stopping the decoy container: the port went
 took thirty seconds and I ran it last.
 
 The catch-all `RETURN` gaining 12 pkts while the `DROP` above it stayed at 0
-was real, and it was Docker's own traffic, not the decoy's — the header
-comment cited it as proof of the wrong thing.
-
-### ✅ G1a — `firewall.sh --apply` has run on a host with root
-
-Closed 2026-11-06 on `test-trapdoor`, as root. Every item on the old list was
-resolved: the backup was written and readable, the teardown loop converged,
-the bridge enumeration returned `172.17.0.1 172.22.0.1 172.23.0.1`, the
-post-apply probes passed with the DROP in the chain, and a second `--apply`
-diffed clean against the first. Evidence in `out/g1/` on the host.
-
-Two defects were found in the dry-run report before `--apply` was run, both
-inside the unquoted heredoc that produces it — see `docs/g1-findings-2026-11-06.md`.
-And the first `verify.sh` after applying printed `no TRAPDOOR rules applied`,
-because check 7 grepped the ruleset for a string no rule contained.
-
-**Originally claimed:** `firewall.sh --apply` has never run on a host with root.
-What that meant, kept here because the shape of the gap is the lesson:
-
-**It was the single largest gap in this repo.** Everything in `firewall.sh`
-from the `== applying ==` banner to the final `applied and verified.` was a
-claim about a code path nobody had executed. It parsed (`bash -n` clean,
-`set -euo pipefail`), and parsing is not running.
-
-Specifically unproven, all now resolved:
-
-- that `iptables-save > /root/iptables-backup-*.rules` succeeds and the
-  rollback file is readable when it matters
-- that the `iptables -D DOCKER-USER` teardown loop converges instead of
-  mangling the chain on a re-run
-- that the bridge enumeration returns both `docker0` and `br-*` on the real
-  host and refuses cleanly when it returns neither
-- that the post-apply probes (HTTP 200, health path, SSH banner) pass while
-  the DROP is actually in the chain
-- **that it is idempotent** — run twice, same chain, no duplicates
-
-**How it was closed:** on `.45`, as root — `scripts/firewall.sh` (read the
-printed output first, which is how two heredoc defects were found),
-`scripts/firewall.sh --apply`, `scripts/verify.sh`, then `--apply` a second
-time and diff `iptables -S DOCKER-USER` between runs. Backup filename and full
-output are in `out/g1/` on the host.
-
-**Note what closing it did not buy.** The code path works. On the day it was
-closed, the rule it wrote still did not reach the traffic — that was G1b,
-since resolved via G1c. Apply succeeding and apply enforcing are different
-claims, and this file treats them as different claims now.
-
-**A specific warning for whoever runs it:** `verify.sh` check 6 is the
-unreachability probe for A9. An `OK` there with **no** accompanying
-`REFUSED`/`UNREACHABLE` line means the probe broke, not that containment
-holds. Read the line, not the verdict.
+was real, and it was Docker's own traffic, not the decoy's. The header comment
+cited it as proof of the wrong thing.
 
 ### ✅ G2 — a syntax break can no longer ship
 
-**Closed 2026-11-07.** `make test` now runs `tests/test_syntax.sh`, which
-`bash -n`s every `.sh` in the tree and exits non-zero on any that fails.
+**Closed 2026-11-07**, and re-run on this checkout **2026-11-12** (section E).
+`make test` runs `tests/test_syntax.sh`, which `bash -n`s every `.sh` in the
+tree and exits non-zero on any that fails.
 
-Proven both ways, in the order that matters — first that it is green on the
-real tree, then that it goes red on the real defect:
+Proven both ways, in the order that matters. First that it is green on the real
+tree, then that it goes red on the real defect:
 
 ```
 $ make test                      # clean tree
@@ -246,15 +395,15 @@ FAIL  ./scripts/firewall.sh
 The script is restored by checksum afterward (`f9556889…`), not by memory.
 
 **The history, kept because the shape is the lesson.** `firewall.sh` carried
-two defects — a stray `fi`, and `$BRIDGES` used three times with its
-declaration deleted — and between them the containment proof was unparsable.
-It was fixed in `14c67d8`, and the fix commit says so plainly.
+two defects, a stray `fi` and `$BRIDGES` used three times with its declaration
+deleted, and between them the containment proof was unparsable. It was fixed in
+`14c67d8`, and the fix commit says so plainly.
 
 **Correction, 2026-11-07:** the claim that this lasted "from the commit that
 claimed containment" is not supported by the repository. I re-parsed every
 version of every `.sh` at all 58 commits (`git show <c>:<path> | bash -n`).
 Every committed version of `firewall.sh` parses. The break existed in a
-**working-tree state that was never committed** — so no commit message and no
+**working-tree state that was never committed**, so no commit message and no
 acceptance row ever rested on an unparsable script. What was true is narrower
 and still bad: the author of the fix could not parse the file in front of her,
 she found that by hand, and nothing in `make test` would have said so.
@@ -264,9 +413,10 @@ its own history has stopped being evidence, and this row was doing exactly
 what the rest of the file warns about.
 
 **What this does not prove:** that any script is correct, or that it will work
-when run. `firewall.sh --apply` can parse and still write a rule that matches
-no packet — that was G1b, and parsing would have called it green. Parsing is
-not running, and this row closes parsing only.
+when run. `make test` parses all eight scripts and runs one of them only
+indirectly (the shipper tests import its parser). `firewall.sh --apply`,
+`verify.sh`, and both scenarios are parsed and unexecuted by `make test`.
+Parsing is not running.
 
 ### G3 — not claimed: the deployment is secure
 
@@ -288,13 +438,26 @@ a different guarantee, and it is what A9 tests.
 Timestamps are Cowrie's, HTTP sessions are approximated, and there is no chain
 of custody.
 
+### G7 — closed 2026-11-12: a fresh clone can print the firewall report
+
+**Claimed as a gap, then tested, and it is not a gap.** The report prints on a
+tree with no `.env` and exits 0 (transcript in G1a). This row is kept as a
+closed row because it was published for one edit as a defect that had not been
+tested, and because the test that closed it is two lines and belongs somewhere
+that runs it.
+
+**Still not claimed:** that a fresh clone can be *deployed* by following
+`docs/DEPLOY.md` end to end. That needs a host with root and a `.env`, and
+steps 1–5 were written from the deployment that exists, not re-walked from a
+clone. Nobody has done the walkthrough.
+
 ---
 
 ## Why this list is split in two
 
 The risk is rarely where the worry is pointed. C7 is the worked example: my
 instinct said the bait regex in `default.conf` was the fragile part. I ran all
-ten paths through it — all ten match. The regex was fine. The actual gap was
+ten paths through it, all ten match. The regex was fine. The actual gap was
 in the hand-built normalizer event that silently omitted `http_status`,
 because nothing in it could be incomplete *against* anything.
 
@@ -318,6 +481,16 @@ rebase.
    is a bug.
 3. The thing that reports is not the thing that runs.
 4. A claim in Part 2 does not become true by being written well.
+5. **Evidence that cannot be re-read is not evidence.** A pointer to an empty
+   directory, or to a path outside the repo, is a claim about a claim.
+
+This file was rewritten on 2026-11-12 for exactly rule 5: what was labelled
+proven was, in one place, labelled from memory of a run rather than from an
+artifact anyone can open. In the course of that rewrite I wrote a tenth wrong
+claim into the file, asserting a `set -e` defect I had not tested, and then
+reproduced the opposite result in one command. Both changes are recorded in
+G1a rather than quietly reverted. Nothing about the box changed that day. The
+listing of what is proven did.
 
 This is why the list exists. Not to be right — to move the argument from
 memory to a file that can disagree with me.
