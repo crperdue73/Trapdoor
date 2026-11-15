@@ -210,6 +210,11 @@ line saying what would close it.
 checkout (`out/g1/` is empty). One defect claim inside this row is DISPROVED,
 not open — see the status line below.**
 
+Who is allowed to answer the two questions this row is waiting on (which host,
+who has root) is written down in `docs/AUTHORITY.md`. It was never written down
+before 2026-11-12, which is why this row stalled on an authority instead of on
+technical work.
+
 **Claimed closed 2026-11-06 on `test-trapdoor`, as root.** Kept in Part 2
 because the artifact this file cites for it cannot be produced from the
 repository, and on this checkout it cannot be produced at all.
