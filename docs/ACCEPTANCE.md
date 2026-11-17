@@ -204,7 +204,62 @@ green `make test` as a deployment verdict. It is a pre-push check.
 These are stated so nobody reads Part 1 as more than it is. Each one has a
 line saying what would close it.
 
-### ⚠️ G1a — `firewall.sh --apply`: the code path ran, the evidence is gone
+### ⚠️ G1a — `firewall.sh --apply`: RE-RUN 2026-11-17, evidence committed, verdict is FAIL (check 8)
+
+**Status as of 2026-11-17 16:14Z: the run gap is closed. `--apply` has now
+executed on a host with root, twice, idempotently, and the transcript is in the
+repository at `docs/g1-transcript-20261117.txt` (not gitignored). The row stays
+in Part 2 for a different and narrower reason: `scripts/verify.sh` exits 1 on
+this host, and check 8 is the failure. Do not call this deployed.**
+
+**What the 2026-11-17 run proved**, on `test-trapdoor` (192.168.111.45),
+kernel 6.17.2-2-pve, as root:
+
+- `firewall.sh` (no flags) exits 0 and prints its report.
+- `firewall.sh --apply` exits 0. DOCKER-USER is built with 20 TRAPDOOR rules
+  plus the trailing RETURN.
+- A second `--apply` leaves `iptables -S DOCKER-USER` **byte-identical**
+  (`diff` clean, 22 lines both runs). Idempotent, measured, not asserted.
+- The rules match **container destinations after DNAT** (172.22.0.2:2222,
+  :2223, :80 and 172.22.0.3:8081), not host ports, which is what the script's
+  comment claims and what the 2026-11-06 investigation established.
+- Check 6 holds: `cowrie cannot reach the LAN (connection refused, internal
+  network holding)`. Named refusal, not a bare OK, so the probe ran.
+- 20790 events parsed, 4 containers up, every event line valid JSON.
+
+**What the run did NOT prove, and this is the open part.**
+
+Check 8 **FAILS**: `console is scoped to the farm /16: every host can read
+every student's attack traffic`. The console on 8081 replays what students
+typed. Scoped to a /16 that contains every agent host and management interface
+on the farm, that means any host on the farm can read any other student's
+session. That is a privacy defect in the deployment, not a documentation gap,
+and it is why the verdict line still reads "do not call this deployed."
+
+Closing it needs a decision, not a script fix: narrow the console scope to the
+student VLAN. `LAB_CIDR` is also still the whole farm (`192.168.0.0/16`), which
+the script's own report says "is not a boundary."
+
+**Three measurement traps hit during this run, recorded because each one
+produced a confident wrong answer:**
+
+1. *Localhost cannot test DOCKER-USER.* Traffic sourced on .45 to its own
+   external IP resolves to `local ... dev lo` and traverses INPUT, never
+   FORWARD. Probing from the box itself showed a **delta of 0 packets** and
+   looked exactly like a dead chain. The same probes fired from a different
+   host (192.168.111.43) moved the counter by **1178 packets**. `verify.sh`
+   check 7 warns "TRAPDOOR rules present but not one has matched a packet" when
+   run on the host, which is this artifact, not a fault. A check that cannot
+   reach the chain must not report on it.
+2. *`$?` after a pipe is the exit of the last command.* Reading
+   `bash scripts/verify.sh | tail` gave `exit=0` under a failing run. The
+   script's real exit was 1. The exit code is correct; the reading was wrong.
+3. *An empty evidence directory reads like lost evidence.* This row was open
+   for eleven days partly because `out/g1/` is gitignored, so a real run left
+   no artifact a reader could open. The transcript now lives under `docs/` for
+   that reason.
+
+**Superseded for history — the original 2026-11-06 evidence gap.**
 
 **Open gap: the 2026-11-06 `--apply` run cannot be re-verified from this
 checkout (`out/g1/` is empty). One defect claim inside this row is DISPROVED,

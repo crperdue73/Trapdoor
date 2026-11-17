@@ -1,0 +1,87 @@
+# G1a re-close: firewall.sh --apply on a host with root
+# host: test-trapdoor  date: 2026-11-17T16:14:16Z
+# kernel: 6.17.2-2-pve
+
+## 1. dry-run report exits 0, refuses nothing destructive
+plain report exit=0
+
+## 2. first --apply
+apply#1 exit=0
+  OK   SSH banner still served from this host
+
+applied and verified.
+
+## 3. DOCKER-USER after apply #1
+-N DOCKER-USER
+-A DOCKER-USER -s 192.168.0.0/16 -d 172.22.0.2/32 -p tcp -m tcp --dport 2222 -m comment --comment TRAPDOOR-scope -j ACCEPT
+-A DOCKER-USER -s 172.22.0.1/32 -d 172.22.0.2/32 -p tcp -m tcp --dport 2222 -m comment --comment TRAPDOOR-scope -j ACCEPT
+-A DOCKER-USER -s 172.23.0.1/32 -d 172.22.0.2/32 -p tcp -m tcp --dport 2222 -m comment --comment TRAPDOOR-scope -j ACCEPT
+-A DOCKER-USER -s 172.17.0.1/32 -d 172.22.0.2/32 -p tcp -m tcp --dport 2222 -m comment --comment TRAPDOOR-scope -j ACCEPT
+-A DOCKER-USER -d 172.22.0.2/32 -p tcp -m tcp --dport 2222 -m comment --comment TRAPDOOR-scope -j DROP
+-A DOCKER-USER -s 192.168.0.0/16 -d 172.22.0.2/32 -p tcp -m tcp --dport 2223 -m comment --comment TRAPDOOR-scope -j ACCEPT
+-A DOCKER-USER -s 172.22.0.1/32 -d 172.22.0.2/32 -p tcp -m tcp --dport 2223 -m comment --comment TRAPDOOR-scope -j ACCEPT
+-A DOCKER-USER -s 172.23.0.1/32 -d 172.22.0.2/32 -p tcp -m tcp --dport 2223 -m comment --comment TRAPDOOR-scope -j ACCEPT
+-A DOCKER-USER -s 172.17.0.1/32 -d 172.22.0.2/32 -p tcp -m tcp --dport 2223 -m comment --comment TRAPDOOR-scope -j ACCEPT
+-A DOCKER-USER -d 172.22.0.2/32 -p tcp -m tcp --dport 2223 -m comment --comment TRAPDOOR-scope -j DROP
+-A DOCKER-USER -s 192.168.0.0/16 -d 172.22.0.2/32 -p tcp -m tcp --dport 80 -m comment --comment TRAPDOOR-scope -j ACCEPT
+-A DOCKER-USER -s 172.22.0.1/32 -d 172.22.0.2/32 -p tcp -m tcp --dport 80 -m comment --comment TRAPDOOR-scope -j ACCEPT
+-A DOCKER-USER -s 172.23.0.1/32 -d 172.22.0.2/32 -p tcp -m tcp --dport 80 -m comment --comment TRAPDOOR-scope -j ACCEPT
+-A DOCKER-USER -s 172.17.0.1/32 -d 172.22.0.2/32 -p tcp -m tcp --dport 80 -m comment --comment TRAPDOOR-scope -j ACCEPT
+-A DOCKER-USER -d 172.22.0.2/32 -p tcp -m tcp --dport 80 -m comment --comment TRAPDOOR-scope -j DROP
+-A DOCKER-USER -s 192.168.0.0/16 -d 172.22.0.3/32 -p tcp -m tcp --dport 8081 -m comment --comment TRAPDOOR-scope -j ACCEPT
+-A DOCKER-USER -s 172.22.0.1/32 -d 172.22.0.3/32 -p tcp -m tcp --dport 8081 -m comment --comment TRAPDOOR-scope -j ACCEPT
+-A DOCKER-USER -s 172.23.0.1/32 -d 172.22.0.3/32 -p tcp -m tcp --dport 8081 -m comment --comment TRAPDOOR-scope -j ACCEPT
+-A DOCKER-USER -s 172.17.0.1/32 -d 172.22.0.3/32 -p tcp -m tcp --dport 8081 -m comment --comment TRAPDOOR-scope -j ACCEPT
+-A DOCKER-USER -d 172.22.0.3/32 -p tcp -m tcp --dport 8081 -m comment --comment TRAPDOOR-scope -j DROP
+-A DOCKER-USER -j RETURN
+
+## 4. second --apply, idempotency
+apply#2 exit=0
+IDEMPOTENT: byte-identical (22 lines both runs)
+
+## 5. verify.sh
+          0.0.0.0:10000
+          *:22
+  OK    port 2222 bound to 192.168.111.45
+  OK    port 2223 bound to 192.168.111.45
+  OK    port 8080 bound to 192.168.111.45
+
+2. decoy reachable
+  OK    GET / -> 200
+  OK    GET /.env -> 403 (bait path working)
+
+3. cowrie emulating ssh
+  OK    SSH banner: SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u2
+
+4. pipeline producing events
+  OK    20790 events (python3 parser), sensors: cowrie=3774 nginx=17016
+  OK    sensor present: cowrie
+  OK    sensor present: nginx
+  OK    every event line is valid JSON
+  OK    cowrie image has /cowrie/cowrie-git/src/cowrie/data/fs.pickle
+  OK    cowrie/etc/userdb.txt is ASCII (Cowrie will be able to read it)
+  OK    nginx raw log is valid JSON on all 947 lines
+  OK    all 4 declared ports are published and listening
+
+5. containers
+  OK    running: console cowrie shipper web 
+
+6. honeypot egress (should be impossible)
+  OK    cowrie cannot reach the LAN (connection refused, internal network holding)
+7. host firewall
+  OK    ufw is present: active
+  WARN  TRAPDOOR rules present but not one has matched a packet — present is not enforcing; check rule order and DNAT destination
+  OK    20 TRAPDOOR rules present
+  OK    LAB_CIDR scoped to 192.168.0.0/16
+  WARN  ufw does not cover the decoy: published ports are DNATed and bypass INPUT
+
+8. console scope (must NOT be lab-reachable)
+  OK    console rules present on 8081 (1 drop)
+  FAIL console is scoped to the farm /16: every host can read every student's attack traffic
+
+SOME CHECKS FAILED: do not call this deployed.
+
+## 6. chain is in the packet path (off-box traffic, measured)
+note: traffic sourced ON .45 resolves to dev lo and CANNOT traverse DOCKER-USER.
+      measured from 192.168.111.43 instead. delta below is from that test.
+total packets matched: 1142
