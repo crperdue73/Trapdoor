@@ -71,6 +71,10 @@ COWRIE_SSH_PORT=2222
 COWRIE_TELNET_PORT=2223
 WEB_PORT=8080
 RETENTION_DAYS=14
+
+# The console. 8081 is the default; it is listed here so the Step 3 block and
+# the console subsection below do not disagree about what exists.
+CONSOLE_PORT=8081
 ```
 
 ### The console, and the one line you must write yourself
@@ -112,14 +116,44 @@ Two things worth knowing before you set them:
 
 ## Step 4 — bring it up
 
+**Read this before you run it.** `make up` starts containers. It does not apply
+the firewall, and the firewall is what keeps the console private. So between
+this step and the next one, the console on port 8081 is bound to `LAB_BIND_IP`
+with no firewall rule in front of it, and it has no password of its own. It
+shows the keystroke log: usernames, passwords and commands that students typed
+into the decoy.
+
+Measured on a bench on 2026-11-18 with the documented defaults
+(`LAB_BIND_IP=0.0.0.0`, `ADMIN_CIDR` unset): from a different host,
+`curl http://<lab>:8081/api/events` returned **200, unauthenticated**, and the
+body contained recorded credentials and commands. No token, no header.
+
+That is a short window on a lab network and a long one on a lab network that
+someone else can reach. Close it before you walk away:
+
 ```bash
-make up          # or: docker compose up -d
+make up              # or: docker compose up -d
+sudo ./scripts/firewall.sh --apply    # until this runs, 8081 is open
 docker compose ps
 docker compose logs -f shipper
 ```
 
 Expected: `firstboot` runs once and exits 0, `trapdoor-web`, `trapdoor-cowrie`
 and `trapdoor-shipper` stay up.
+
+Two things worth knowing about that firewall line:
+
+- It needs root, which is why it is not inside `make up`. A `make up` that
+  silently asks for sudo is a surprise nobody wants at 2am.
+- With `ADMIN_CIDR` unset it scopes the console to this host's own subnet as the
+  host defines it, which on a flat farm is the whole farm. Set `ADMIN_CIDR` in
+  Step 3 if that is not what you want.
+
+Do not reach for `LAB_BIND_IP=127.0.0.1` as a shortcut here. It binds the
+console, but it also binds the decoy, so students cannot reach the thing they
+are supposed to attack. The console and the decoy share one bind address
+because they share one lab network. The firewall is the part that separates
+them, and that is why it is not optional.
 
 ## Step 5 — confirm it actually works
 
