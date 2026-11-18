@@ -204,13 +204,21 @@ green `make test` as a deployment verdict. It is a pre-push check.
 These are stated so nobody reads Part 1 as more than it is. Each one has a
 line saying what would close it.
 
-### ⚠️ G1a — `firewall.sh --apply`: RE-RUN 2026-11-17, evidence committed, verdict is FAIL (check 8)
+### ⚠️ G1a - `firewall.sh --apply`: green on a bench 2026-11-18, never on a host with something to protect
 
-**Status as of 2026-11-17 16:14Z: the run gap is closed. `--apply` has now
+**Status as of 2026-11-18 20:4xZ: `verify.sh` exits 0 end to end on a clean
+bench, and still stops at check 8 on 192.168.111.45 because that host has no
+declaration written. The verdict moved from FAIL to "proven on a bench,
+unproven in deployment." Read the 2026-11-18 note below before the 2026-11-17
+one, because the 11-17 verdict was measuring the network rather than the
+deployment and that is now understood.**
+
+**Status as of 2026-11-17 16:14Z, kept for the record: the run gap was closed. `--apply` has now
 executed on a host with root, twice, idempotently, and the transcript is in the
-repository at `docs/g1-transcript-20261117.txt` (not gitignored). The row stays
-in Part 2 for a different and narrower reason: `scripts/verify.sh` exits 1 on
-this host, and check 8 is the failure. Do not call this deployed.**
+repository at `docs/g1-transcript-20261117.txt` (not gitignored). The row stayed
+in Part 2 for a different and narrower reason: `scripts/verify.sh` exited 1 on
+that host, and check 8 was the failure. Do not read the 11-17 run as deployed
+either; it was a run with a failing check, not a green one.**
 
 **What the 2026-11-17 run proved**, on `test-trapdoor` (192.168.111.45),
 kernel 6.17.2-2-pve, as root:
@@ -227,7 +235,50 @@ kernel 6.17.2-2-pve, as root:
   network holding)`. Named refusal, not a bare OK, so the probe ran.
 - 20790 events parsed, 4 containers up, every event line valid JSON.
 
-**What the run did NOT prove, and this is the open part.**
+**Update 2026-11-18, bench verdict from an independent reviewer (dept:jim).**
+This row's status changed twice today and both changes are narrower than they
+look.
+
+The 2026-11-17 failure above was check 8 asserting a property of the NETWORK
+(a console narrower than the whole /16) rather than a property of the
+DEPLOYMENT. On this farm there is one network: the entire IT department is on
+a single /16 and there is no student VLAN to narrow to, which Robbie confirmed
+on 2026-11-18. A check that fails the only configuration that exists is the
+same lie as one that cannot fail. Check 8 now asserts a DECLARED scope: an
+undeclared console fails, a console that has drifted WIDER than its declaration
+fails, and an honest declaration of a /16 passes.
+
+With that change, a reviewer on a clean Debian 13.7 bench (192.168.111.49),
+fresh clone, base install, DEPLOY.md Steps 1 through 5 as written:
+
+- `firewall.sh --apply` exits 0. 20 TRAPDOOR-scope rules in the bench's own
+  DOCKER-USER: ACCEPT the declared scope, ACCEPT the three local bridges, then
+  an unconditional DROP for the port. Inserted above Docker's bare RETURN so
+  they are reachable. Convergent on re-run, not additive.
+- `verify.sh` **exits 0, full green.** This is the first end-to-end green this
+  project has recorded.
+- Check 8 caught a real operator error during that run, unforced: the reviewer
+  declared `CONSOLE_NETWORK_DECLARED` as an instructor /24 while `ADMIN_CIDR`
+  was /16, and the check failed the drift in the correct words. He had edited
+  the declaration expecting it to narrow the rule; the rule comes from
+  `ADMIN_CIDR` at `firewall.sh:421-422`.
+
+**The console DROP rule has never dropped a packet.** Not because it is
+untested in principle, but because a bench with no interface outside the
+declared scope has no source that should be dropped, and the script correctly
+refuses to let the tester narrow the scope inside the host's own network. It is
+verified by reading the chain, not by a packet, and that is re-derivable on any
+host with a second interface. Do not count it as exercised.
+
+So the remaining gap is not a defect and not a missing artifact. It is a
+deployment that has been proven on a bench and never on a host where the
+firewall has something to protect: a named host, root, and a live teammate.
+That decision belongs to Robbie and is recorded here as unproven rather than
+as pending, so that the next reader does not go prove it on a live network in
+order to tick a box in this file.
+
+**What the 2026-11-17 run did NOT prove, in its own words and kept for the
+record.**
 
 Check 8 **FAILS**: `console is scoped to the farm /16: every host can read
 every student's attack traffic`. The console on 8081 replays what students
