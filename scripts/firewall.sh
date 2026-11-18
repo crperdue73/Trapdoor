@@ -199,6 +199,42 @@ fi
 # secondary, and on most deployments should never be applied.
 # ---------------------------------------------------------------------------
 
+# Resolve the console's scope BEFORE the report renders it. Empty ADMIN_CIDR
+# means "the console host's own subnet", never "LAB_CIDR", never "everything".
+#
+# This block used to live below the heredoc, at what was then line 361. The
+# effect was that the report, the one artifact a cautious human reads before
+# deciding to apply anything, printed the sentence above with an empty variable
+# in it:
+#
+#   # CONSOLE = console on port 8081 is scoped to . It shows
+#
+# and exited 0. Grammatical, complete-looking, and missing the number in the
+# same line that is supposed to say who can read the keystrokes. Jim found it on
+# 2026-11-18, in report mode, with ADMIN_CIDR unset, which is the shipped
+# default and the case DEPLOY.md now calls the dangerous one.
+#
+# That is the same defect as the 0.0.0.0/0 check above, which used to sit below
+# the print-only exit: a check that only fires on --apply is not a check, and a
+# report that says nothing where a number belongs is not a report. Moving the
+# resolution up means the report and the apply path read one value, resolved
+# once, so they cannot disagree.
+if [[ -z "$ADMIN_CIDR" ]]; then
+    ADMIN_CIDR=$(ip -4 -o addr show 2>/dev/null \
+        | awk -v ip="${LAB_BIND_IP}" '$4 ~ ("^" ip "/") {print $4}' \
+        | head -1)
+    if [[ -z "$ADMIN_CIDR" ]]; then
+        echo "REFUSING: cannot determine the console host's own subnet, and" >&2
+        echo "          ADMIN_CIDR is unset. Set ADMIN_CIDR in .env: the console" >&2
+        echo "          shows what every student typed, so it must not inherit" >&2
+        echo "          the decoy's LAB_CIDR scope." >&2
+        exit 1
+    fi
+    ADMIN_CIDR_NOTE="${ADMIN_CIDR} (derived from this host's own address; set ADMIN_CIDR to change)"
+else
+    ADMIN_CIDR_NOTE="${ADMIN_CIDR}"
+fi
+
 if [[ "$LAB_CIDR" == "192.168.0.0/16" ]]; then
     CIDR_NOTE="the WHOLE FARM. Every LXC, every agent host, every management
 # interface on the /16 can reach the decoy. That is fine for a teaching lab.
@@ -353,24 +389,6 @@ if [[ -z "$BRIDGES" ]]; then
     echo "          based rule would drop the host's own health check. Fix the" >&2
     echo "          enumeration or do not use --apply on this host." >&2
     exit 1
-fi
-
-# Resolve the console's scope. Empty ADMIN_CIDR means "the console host's own
-# subnet", never "LAB_CIDR", never "everything".
-if [[ -z "$ADMIN_CIDR" ]]; then
-    ADMIN_CIDR=$(ip -4 -o addr show 2>/dev/null \
-        | awk -v ip="${LAB_BIND_IP}" '$4 ~ ("^" ip "/") {print $4}' \
-        | head -1)
-    if [[ -z "$ADMIN_CIDR" ]]; then
-        echo "REFUSING: cannot determine the console host's own subnet, and" >&2
-        echo "          ADMIN_CIDR is unset. Set ADMIN_CIDR in .env: the console" >&2
-        echo "          shows what every student typed, so it must not inherit" >&2
-        echo "          the decoy's LAB_CIDR scope." >&2
-        exit 1
-    fi
-    ADMIN_CIDR_NOTE="${ADMIN_CIDR} (derived from this host's own address; set ADMIN_CIDR to change)"
-else
-    ADMIN_CIDR_NOTE="${ADMIN_CIDR}"
 fi
 
 echo "allowing sources: ${LAB_CIDR} plus local bridges: ${BRIDGES}"

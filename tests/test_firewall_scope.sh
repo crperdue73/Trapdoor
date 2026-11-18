@@ -130,6 +130,76 @@ else
     echo "  SKIP narrower-than-host check (no IPv4 address found)"
 fi
 
+# ---------------------------------------------------------------------------
+# The report must never print a scope it has not resolved.
+#
+# Found by Jim on 2026-11-18, in report mode, with ADMIN_CIDR unset (the shipped
+# default). The report said:
+#
+#   # CONSOLE = console on port 8081 is scoped to . It shows
+#
+# and exited 0. The derivation ran about 140 lines further down, so the one
+# artifact a cautious human reads before applying anything printed a sentence
+# with the number missing, in the middle of the sentence that is supposed to say
+# who can read student keystrokes. A blank there does not read as "unknown". It
+# reads as "nothing to worry about".
+#
+# This is the same shape as the 0.0.0.0/0 guard that used to sit below the
+# print-only exit. Assertions below are cheap and they are the kind that would
+# have caught it: the report either states a scope, or it refuses out loud.
+# It may not state an empty one.
+# ---------------------------------------------------------------------------
+echo
+
+# Pick an address that actually exists on this box, so the derived path can
+# resolve. Tests must not depend on a specific host's IP.
+_HERE_IP=$(ip -4 -o addr show 2>/dev/null \
+    | awk '$2 != "lo" && $4 !~ /^127\./ {sub(/\/.*/,"",$4); print $4; exit}')
+
+if [[ -z "$_HERE_IP" ]]; then
+    echo "  SKIP report-never-blank (no non-loopback IPv4 on this machine)"
+else
+    # 1. ADMIN_CIDR unset: the report must still name a scope, not a blank.
+    _out=$(ADMIN_CIDR= LAB_BIND_IP="$_HERE_IP" bash scripts/firewall.sh 2>&1)
+    _rc=$?
+    if [[ $_rc -ne 0 ]]; then
+        # A refusal is an acceptable answer, and it must say why.
+        if printf '%s' "$_out" | grep -qi "REFUSING"; then
+            ok "report with ADMIN_CIDR unset either resolves the scope or refuses out loud"
+        else
+            bad "report with ADMIN_CIDR unset exited $_rc without saying REFUSING"
+        fi
+    else
+        _line=$(printf '%s\n' "$_out" | grep "is scoped to" | head -1)
+        if [[ -z "$_line" ]]; then
+            bad "report with ADMIN_CIDR unset has no console scope line at all"
+        elif printf '%s' "$_line" | grep -qE "is scoped to \. ?It shows"; then
+            bad "report printed a BLANK console scope: '${_line}'"
+        elif printf '%s' "$_line" | grep -qE "is scoped to [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+"; then
+            ok "report with ADMIN_CIDR unset names the derived scope instead of a blank"
+        else
+            bad "report scope line has an unparseable scope: '${_line}'"
+        fi
+    fi
+
+    # 2. ADMIN_CIDR set: the report must echo exactly that value.
+    #    The value must not be narrower than this host's own network or the
+    #    script refuses it, correctly. Derive a legal one from the host itself
+    #    so this test does not encode one machine's addressing.
+    _scope=$(ip -4 -o addr show 2>/dev/null \
+        | awk -v ip="$_HERE_IP" '$4 ~ ("^" ip "/") {print $4; exit}')
+    if [[ -z "$_scope" ]]; then
+        echo "  SKIP report-echoes-scope (could not derive this host's prefix)"
+    else
+        _out=$(ADMIN_CIDR="$_scope" LAB_BIND_IP="$_HERE_IP" bash scripts/firewall.sh 2>&1)
+        if printf '%s' "$_out" | grep -qF "is scoped to ${_scope}"; then
+            ok "report echoes the explicitly set console scope (${_scope})"
+        else
+            bad "report does not echo an explicitly set ADMIN_CIDR=${_scope}"
+        fi
+    fi
+fi
+
 echo
 if [[ $FAIL -eq 0 ]]; then
     echo "PASS  $PASS console-scope tests"
