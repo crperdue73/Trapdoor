@@ -204,7 +204,7 @@ green `make test` as a deployment verdict. It is a pre-push check.
 These are stated so nobody reads Part 1 as more than it is. Each one has a
 line saying what would close it.
 
-### ⚠️ G1a - `firewall.sh --apply`: green on a bench 2026-11-18, never on a host with something to protect
+### G1a - `firewall.sh --apply`: green on a bench 2026-11-18; DROP semantics measured, insert path argued
 
 **Status as of 2026-11-18 20:4xZ: `verify.sh` exits 0 end to end on a clean
 bench, and still stops at check 8 on 192.168.111.45 because that host has no
@@ -263,12 +263,48 @@ fresh clone, base install, DEPLOY.md Steps 1 through 5 as written:
   the declaration expecting it to narrow the rule; the rule comes from
   `ADMIN_CIDR` at `firewall.sh:421-422`.
 
-**The console DROP rule has never dropped a packet.** Not because it is
-untested in principle, but because a bench with no interface outside the
-declared scope has no source that should be dropped, and the script correctly
-refuses to let the tester narrow the scope inside the host's own network. It is
-verified by reading the chain, not by a packet, and that is re-derivable on any
-host with a second interface. Do not count it as exercised.
+**The console DROP rule has never dropped a packet in DOCKER-USER.** Reaching
+it needs a source outside the declared scope, and this farm is one /16 with no
+second subnet (Robbie, 2026-11-18: "there IS NO other subnet. i only have this
+/16"). So the box that would have settled it cannot be provided on this
+network, and that reason is not going to lift.
+
+**But the rule's semantics are now measured, separately, and that is new.**
+On a scratch chain, an identical ACCEPT-one-source-then-DROP-the-port shape was
+built by hand and probed from both sides of the boundary:
+
+    source 127.0.0.1 (accepted) -> CONNECTED
+    source 127.0.0.2 (not accepted) -> TIMED OUT, no response
+    iptables -L DROPTEST -n -v
+    1  4 pkts  ACCEPT tcp -- * * 127.0.0.1  0.0.0.0/0 dport 18081
+    2  2 pkts  DROP   tcp -- * * 0.0.0.0/0  0.0.0.0/0 dport 18081
+
+Reproduced independently on this box before the wording was written into this
+file, with the same two results and a DROP counter of 2. The timeout rather than
+a refusal is the load-bearing detail: a reject would also stop the connection,
+so the behaviour alone cannot distinguish DROP from REJECT. The counter can.
+**The counter is the evidence; the behaviour is only a verdict.**
+
+**What is proven:** a rule of this exact shape, ACCEPT one source then DROP the
+port unconditionally, silently discards a packet from a source it does not
+accept, and does so as a drop rather than a reject.
+
+**What is still NOT proven:** that this script's instance of it is reachable
+where the script puts it. The scratch chain was built by hand. The insert path,
+the position above Docker's bare RETURN, and the DNAT'd destination matching
+were not exercised by that test; they remain argued from the rule listing, and
+argued is not measured. Do not upgrade one to the other.
+
+**On the guard that made this necessary.** `firewall.sh:180` refuses an
+`ADMIN_CIDR` narrower than the host's own network. That refusal exists because
+of 2026-11-12, when a /24 test inside a /16 farm reported "boundary proven" from
+both directions and both directions were wrong, since both were taken from
+inside the same /24. The refusal is correct and the reviewer did not work around
+it: no `.env` change, no declaration, chain and alias removed afterwards. Note
+what it costs, though. It is now the only thing standing between this project
+and a genuine in-deployment drop test, and it is protecting against a FALSE
+proof, not against a real one. An explicit override for a self-contained
+loopback test is conceivable and deliberately not proposed here.
 
 So the remaining gap is not a defect and not a missing artifact. It is a
 deployment that has been proven on a bench and never on a host where the
