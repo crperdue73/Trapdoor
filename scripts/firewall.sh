@@ -91,18 +91,107 @@ APPLY=false
 [[ "${1:-}" == "--apply" ]] && APPLY=true
 
 # shellcheck disable=SC1091
+#
+# .env is a DEFAULT, not an override. `source .env` plain clobbers whatever the
+# caller exported, which meant the tests below passed on a machine with no
+# .env and silently failed on the honeypot, where .env exists and sets
+# LAB_CIDR=192.168.0.0/16. Two of seven scope tests failed on the real host and
+# passed on mine, and the difference was a file, not a bug in the rules.
+#
+# Snapshot what the caller set, source the file, then restore the caller's
+# values on top. Precedence: explicit environment > .env > built-in default.
+__ENV_LAB_CIDR="${LAB_CIDR:-}"
+__ENV_LAB_BIND_IP="${LAB_BIND_IP:-}"
+__ENV_ADMIN_CIDR="${ADMIN_CIDR:-}"
+__ENV_COWRIE_SSH_PORT="${COWRIE_SSH_PORT:-}"
+__ENV_COWRIE_TELNET_PORT="${COWRIE_TELNET_PORT:-}"
+__ENV_WEB_PORT="${WEB_PORT:-}"
+__ENV_CONSOLE_PORT="${CONSOLE_PORT:-}"
+
 [[ -f .env ]] && source .env
+
+[[ -n "$__ENV_LAB_CIDR" ]] && LAB_CIDR="$__ENV_LAB_CIDR"
+[[ -n "$__ENV_LAB_BIND_IP" ]] && LAB_BIND_IP="$__ENV_LAB_BIND_IP"
+[[ -n "$__ENV_ADMIN_CIDR" ]] && ADMIN_CIDR="$__ENV_ADMIN_CIDR"
+[[ -n "$__ENV_COWRIE_SSH_PORT" ]] && COWRIE_SSH_PORT="$__ENV_COWRIE_SSH_PORT"
+[[ -n "$__ENV_COWRIE_TELNET_PORT" ]] && COWRIE_TELNET_PORT="$__ENV_COWRIE_TELNET_PORT"
+[[ -n "$__ENV_WEB_PORT" ]] && WEB_PORT="$__ENV_WEB_PORT"
+[[ -n "$__ENV_CONSOLE_PORT" ]] && CONSOLE_PORT="$__ENV_CONSOLE_PORT"
 
 LAB_CIDR="${LAB_CIDR:-192.168.0.0/16}"
 LAB_BIND_IP="${LAB_BIND_IP:-192.168.111.45}"
 COWRIE_SSH_PORT="${COWRIE_SSH_PORT:-2222}"
 COWRIE_TELNET_PORT="${COWRIE_TELNET_PORT:-2223}"
 WEB_PORT="${WEB_PORT:-8080}"
+CONSOLE_PORT="${CONSOLE_PORT:-8081}"
+
+# THE CONSOLE IS NOT BAIT AND DOES NOT GET THE BAIT'S SCOPE.
+#
+# The decoy is meant to be reachable, so LAB_CIDR (which is the whole /16 by
+# default) is the right scope for it. The console is the opposite: it shows
+# every attack every student has thrown, which means it shows their source
+# addresses, the usernames and passwords they guessed, and the commands they
+# typed. Give it LAB_CIDR and a student in the lab can sit and watch every
+# other student in the lab. That is a different service with a different job
+# and it gets a different boundary.
+#
+# ADMIN_CIDR defaults to the console host's own subnet AS THE HOST DEFINES IT,
+# taking the prefix length off the interface, never a guessed /24. On this farm
+# that is a /16, because the farm is a /16. An earlier version of this comment
+# said "the host's own /24" and a .env was written to match, and the result was
+# a console that answered the machine that tested it and refused the human it
+# was built for. A narrow-looking default is not a safe default: on a /16, a
+# /24 means "one twenty-fifth of the people who should get in, and none of the
+# others". Narrow is not the virtue. Correct is.
+ADMIN_CIDR="${ADMIN_CIDR:-}"
 
 if [[ "$LAB_CIDR" == "0.0.0.0/0" ]]; then
     echo "REFUSING: LAB_CIDR is 0.0.0.0/0. This is an internal lab; the whole" >&2
     echo "          internet does not get to reach it. Set LAB_CIDR in .env." >&2
     exit 1
+fi
+
+# Checked here, with LAB_CIDR, and not in the apply path. The first version of
+# this check sat below the print-only exit, so `--apply` would have caught a
+# 0.0.0.0/0 console scope and the dry run, the mode a human actually reads,
+# would have printed the wide-open rules and exited 0. A guard that only runs
+# when you have already decided to commit is not a guard.
+if [[ "$ADMIN_CIDR" == "0.0.0.0/0" ]]; then
+    echo "REFUSING: ADMIN_CIDR is 0.0.0.0/0. The console would be readable by" >&2
+    echo "          everyone who can route here. That is not an admin scope." >&2
+    exit 1
+fi
+
+# And it must not be NARROWER than the host's own network either. That is the
+# bug of 2026-11-12 afternoon: ADMIN_CIDR was set to the test machine's /24 on
+# a /16 farm, so the console answered the machine that tested it and refused
+# the human it was built for. The test said "boundary proven" in both
+# directions and both directions were wrong, because they were both taken from
+# inside the same /24. Widening past the host's own network is a leak; narrowing
+# inside it is a console nobody can reach. Refuse both, and say which.
+if [[ -n "$ADMIN_CIDR" ]]; then
+    _host_cidr=$(ip -4 -o addr show 2>/dev/null \
+        | awk -v ip="${LAB_BIND_IP}" '$4 ~ ("^" ip "/") {print $4}' | head -1)
+    if [[ -n "$_host_cidr" ]]; then
+        _host_prefix="${_host_cidr#*/}"
+        _admin_prefix="${ADMIN_CIDR#*/}"
+        if [[ "$_admin_prefix" =~ ^[0-9]+$ ]] && [[ "$_host_prefix" =~ ^[0-9]+$ ]] \
+           && (( _admin_prefix > _host_prefix )); then
+            echo "REFUSING: ADMIN_CIDR=${ADMIN_CIDR} is narrower than this host's" >&2
+            echo "          own network (${_host_cidr}). The console would be" >&2
+            echo "          reachable from this host and from almost nowhere else," >&2
+            echo "          which reads as working to whoever tests it locally." >&2
+            # Suggestion only: compute the network address for the host's own
+            # prefix. Kept to the octet the prefix actually covers rather than
+            # reimplementing a bitmask, because guessing here is how this whole
+            # afternoon went.
+            _octets=$(( _host_prefix / 8 ))
+            _net=$(printf '%s' "$_host_cidr" | cut -d/ -f1 | awk -F. -v n="$_octets" \
+                '{for(i=1;i<=4;i++) printf "%s%s", (i<=n ? $i : "0"), (i<4 ? "." : ""); print "/" n*8}')
+            echo "          Use ADMIN_CIDR=${_net}" >&2
+            exit 1
+        fi
+    fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -127,6 +216,8 @@ cat <<EOF
 #   3. ufw default-deny inbound, except SSH
 #
 # LAB_CIDR = ${CIDR_NOTE}
+# CONSOLE = console on port ${CONSOLE_PORT} is scoped to ${ADMIN_CIDR}. It shows
+#           what students typed, so it does not get the decoy's scope.
 #
 # This script does NOT add INPUT rules to close the decoy ports, because on
 # this host INPUT never sees them: published ports are DNATed, and off-box
@@ -204,7 +295,7 @@ echo "rollback file: ${BACKUP}"
 #   -s LAB_CIDR -j ACCEPT
 #   -s bridge1  -j ACCEPT
 #   -j DROP
-PORTS="${COWRIE_SSH_PORT},${COWRIE_TELNET_PORT},${WEB_PORT}"
+PORTS="${COWRIE_SSH_PORT},${COWRIE_TELNET_PORT},${WEB_PORT},${CONSOLE_PORT}"
 
 # THE PORT IN DOCKER-USER IS NOT THE PORT ON THE HOST.
 #
@@ -264,7 +355,26 @@ if [[ -z "$BRIDGES" ]]; then
     exit 1
 fi
 
+# Resolve the console's scope. Empty ADMIN_CIDR means "the console host's own
+# subnet", never "LAB_CIDR", never "everything".
+if [[ -z "$ADMIN_CIDR" ]]; then
+    ADMIN_CIDR=$(ip -4 -o addr show 2>/dev/null \
+        | awk -v ip="${LAB_BIND_IP}" '$4 ~ ("^" ip "/") {print $4}' \
+        | head -1)
+    if [[ -z "$ADMIN_CIDR" ]]; then
+        echo "REFUSING: cannot determine the console host's own subnet, and" >&2
+        echo "          ADMIN_CIDR is unset. Set ADMIN_CIDR in .env: the console" >&2
+        echo "          shows what every student typed, so it must not inherit" >&2
+        echo "          the decoy's LAB_CIDR scope." >&2
+        exit 1
+    fi
+    ADMIN_CIDR_NOTE="${ADMIN_CIDR} (derived from this host's own address; set ADMIN_CIDR to change)"
+else
+    ADMIN_CIDR_NOTE="${ADMIN_CIDR}"
+fi
+
 echo "allowing sources: ${LAB_CIDR} plus local bridges: ${BRIDGES}"
+echo "console scope:     ${ADMIN_CIDR_NOTE}"
 
 # Build the final chain state we want, as one array of rule specs, then apply
 # it idempotently.
@@ -283,14 +393,28 @@ while read -r dest; do
     [[ -z "$dest" ]] && continue
     dhost="${dest%:*}"
     dport="${dest##*:}"
-    for src in "$LAB_CIDR" $BRIDGES; do
+
+    # Which sources may reach this destination.
+    #
+    # The console gets ADMIN_CIDR and the decoy gets LAB_CIDR, and the local
+    # bridges are allowed on both so the host's own health check keeps
+    # working. Before the console existed this was one scope for every port,
+    # which was fine while every port was bait.
+    if [[ "$dport" == "$CONSOLE_PORT" ]]; then
+        SOURCES="${ADMIN_CIDR} ${BRIDGES}"
+    else
+        SOURCES="${LAB_CIDR} ${BRIDGES}"
+    fi
+
+    for src in $SOURCES; do
         SPECS+=("-p tcp -d ${dhost} --dport ${dport} -s ${src} -m comment --comment TRAPDOOR-scope -j ACCEPT")
     done
     SPECS+=("-p tcp -d ${dhost} --dport ${dport} -m comment --comment TRAPDOOR-scope -j DROP")
 done <<< "$DESTS"
 
 # Clear any previous version of this ruleset so re-runs are convergent rather
-# than additive. Only touches rules on exactly these three ports.
+# than additive. Only touches rules on exactly these ports: the decoy ports
+# and the console port.
 while read -r rule; do
     [[ -z "$rule" ]] && continue
     # shellcheck disable=SC2086
@@ -354,6 +478,19 @@ for p in "$WEB_PORT"; do
         FAIL=1
     fi
 done
+
+# The console must still answer from its own admin scope, or the new scope
+# closed the door it was meant to narrow. This is checked separately from the
+# decoy because they now have different scopes and a single curl to one port
+# cannot prove the other port's rule is right.
+code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://${LAB_BIND_IP}:${CONSOLE_PORT}/healthz" || true)
+if [[ "$code" == "200" ]]; then
+    echo "  OK   console answering on ${CONSOLE_PORT} (${code})"
+else
+    echo "  WARN console not answering on ${CONSOLE_PORT} after apply (got '${code}')" >&2
+    echo "       not a FAIL: the container may simply not be up yet. If it is" >&2
+    echo "       up and this says WARN, ADMIN_CIDR excludes this host (${ADMIN_CIDR})." >&2
+fi
 
 # The rules must MATCH something. A DROP that has never dropped anything is
 # a comment with a deadline, and on 2026-11-06 this chain held five rules

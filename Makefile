@@ -13,7 +13,7 @@ COMPOSE := docker compose
 SCENARIOS := ssh-bruteforce web-scan
 
 .PHONY: help up down restart logs ps events sessions scenario firewall test \
-        clean verify deploy drift health timer-install timer-remove
+        clean verify deploy drift health timer-install timer-remove console
 
 help:
 	@echo "TRAPDOOR — internal honeypot lab"
@@ -25,6 +25,7 @@ help:
 	@echo "  make events                  pretty-print normalized events"
 	@echo "  make sessions                list sessions with event counts"
 	@echo "  make sessions SESSION=<id>   render one session end to end"
+	@echo "  make console                 start the console on :8081 (read-only)"
 	@echo "  make scenario SCENARIO=<n>   run a scripted attack. n ="
 	@for s in $(SCENARIOS); do echo "                                 - $$s"; done
 	@echo "  make firewall                print the iptables rules for review"
@@ -94,12 +95,27 @@ scenario:
 firewall:
 	@./scripts/firewall.sh --print
 
+# The console is how a person watches this lab. Before 2026-11-12 the only door
+# was `ssh` + `make sessions`, which meant the person the lab was built for
+# could not see it work.
+#
+# It runs in compose because that is how it ships. This target exists so the
+# console can be run straight from the tree during development, reading ./out
+# directly with no container and no rebuild.
+console:
+	@OUT_DIR=$$PWD/out VERIFY_DIR=$$PWD/.verify CONSOLE_BIND=0.0.0.0 \
+	  python3 console/server.py
+
 # G2: a syntax error shipped once and made the containment proof unparsable
 # from the commit that claimed containment until 14c67d8. `bash -n` was what
 # found it, and it was run by hand. It runs here now, over every script in the
 # tree, because `make test` is the thing people actually run before a push.
 test:
 	@python3 tests/test_shipper.py
+	@python3 tests/test_console.py
+	@bash tests/test_firewall_scope.sh
+	@bash tests/test_proxy_protocol.sh
+	@bash tests/test_verify_console_scope.sh
 	@python3 tests/test_docs.py
 	@bash tests/test_syntax.sh
 

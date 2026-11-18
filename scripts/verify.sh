@@ -18,17 +18,40 @@ warn() { printf '  \033[33mWARN\033[0m  %s\n' "$1"; }
 # "NOT RUN" is its own severity, and it fails the run. A pipeline that goes
 # green with a check skipped is the same lie as a check reporting PASS on an
 # exception — just one layer up. (Rule from Vera, 2026-11-01.)
-skip() { printf '  \033[35mNOT RUN\033[0m  %s\n' "$1"; FAIL=1; }
+SKIPPED=0
+skip() { printf '  \033[35mNOT RUN\033[0m  %s\n' "$1"; SKIPPED=$((SKIPPED+1)); FAIL=1; }
 
 cd "$(dirname "$0")/.." || exit 1
 
 # shellcheck disable=SC1091
+# .env fills in what the caller did not set, and must not overwrite what they
+# did. `source .env` plain clobbers the environment, which is how the firewall
+# scope tests passed on a box with no .env and failed on the honeypot, where
+# .env sets LAB_CIDR=192.168.0.0/16. Same fix as firewall.sh: snapshot, source,
+# restore. Precedence: explicit environment > .env > built-in default.
+__ENV_LAB_BIND_IP="${LAB_BIND_IP:-}"
+__ENV_LAB_CIDR="${LAB_CIDR:-}"
+__ENV_ADMIN_CIDR="${ADMIN_CIDR:-}"
+__ENV_COWRIE_SSH_PORT="${COWRIE_SSH_PORT:-}"
+__ENV_COWRIE_TELNET_PORT="${COWRIE_TELNET_PORT:-}"
+__ENV_WEB_PORT="${WEB_PORT:-}"
+__ENV_CONSOLE_PORT="${CONSOLE_PORT:-}"
+
 [[ -f .env ]] && set -a && source .env && set +a
+
+[[ -n "$__ENV_LAB_BIND_IP" ]] && LAB_BIND_IP="$__ENV_LAB_BIND_IP"
+[[ -n "$__ENV_LAB_CIDR" ]] && LAB_CIDR="$__ENV_LAB_CIDR"
+[[ -n "$__ENV_ADMIN_CIDR" ]] && ADMIN_CIDR="$__ENV_ADMIN_CIDR"
+[[ -n "$__ENV_COWRIE_SSH_PORT" ]] && COWRIE_SSH_PORT="$__ENV_COWRIE_SSH_PORT"
+[[ -n "$__ENV_COWRIE_TELNET_PORT" ]] && COWRIE_TELNET_PORT="$__ENV_COWRIE_TELNET_PORT"
+[[ -n "$__ENV_WEB_PORT" ]] && WEB_PORT="$__ENV_WEB_PORT"
+[[ -n "$__ENV_CONSOLE_PORT" ]] && CONSOLE_PORT="$__ENV_CONSOLE_PORT"
 
 LAB_BIND_IP="${LAB_BIND_IP:-}"
 LAB_CIDR="${LAB_CIDR:-}"
 COWRIE_SSH_PORT="${COWRIE_SSH_PORT:-2222}"
 COWRIE_TELNET_PORT="${COWRIE_TELNET_PORT:-2223}"
+CONSOLE_PORT="${CONSOLE_PORT:-8081}"
 WEB_PORT="${WEB_PORT:-8080}"
 
 echo "TRAPDOOR verification"
@@ -260,7 +283,7 @@ print(n)
         if [[ "${good:-0}" -lt 0 ]]; then
             :   # already reported above
         elif [[ "${total:-0}" -eq 0 ]]; then
-            skip "nginx raw log exists but is empty — nothing has been sent yet"
+            skip "nginx raw log exists but is empty: nothing has been sent yet"
         elif [[ "${good}" -lt "${total}" ]]; then
             skip "nginx raw log is INVALID JSON on $((total-good)) of ${total} lines (C8)"
         else
@@ -288,7 +311,7 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
         skip "port publication — compose config produced no output, NOT a verdict"
     else
     declared=$(printf '%s\n' "$cfg" | grep -cE "^\s+published:")
-    bound=$(ss -tln 2>/dev/null | grep -cE ":(${COWRIE_SSH_PORT:-2222}|${COWRIE_TELNET_PORT:-2223}|${WEB_PORT:-8080})\b")
+    bound=$(ss -tln 2>/dev/null | grep -cE ":(${COWRIE_SSH_PORT:-2222}|${COWRIE_TELNET_PORT:-2223}|${WEB_PORT:-8080}|${CONSOLE_PORT:-8081})\b")
     declared=${declared:-0}; bound=${bound:-0}
     if [[ "${declared:-0}" -eq 0 ]]; then
         skip "port publication — compose declares no published ports at all"
@@ -442,11 +465,129 @@ else
     fi
 fi
 
+# --- 8. the console is NOT reachable from the lab ---------------------------
+#
+# The console shows what every student typed: source addresses, the passwords
+# they guessed, the commands they ran. That is a materially different asset
+# from the decoy, and it must not inherit the decoy's LAB_CIDR scope. On
+# 2026-11-12 I published the console on 8081 and left it out of firewall.sh
+# and verify.sh entirely, which is the exact failure this repo keeps finding:
+# a new thing that reports fine and is covered by nothing.
+#
+# This check asserts the boundary rather than the port. A port count would go
+# green either way.
+echo
+echo "8. console scope (must NOT be lab-reachable)"
+
+CONSOLE_CIDR="${ADMIN_CIDR:-}"
+if [[ -z "$CONSOLE_CIDR" ]]; then
+    warn "ADMIN_CIDR unset: firewall.sh derives it from this host's own subnet; set it explicitly to make this check meaningful"
+fi
+
+if command -v iptables >/dev/null 2>&1; then
+    # Every console DROP must have an ACCEPT above it that is NARROWER than
+    # LAB_CIDR. If the console's accept is the same scope as the decoy's, the
+    # split was not applied and the console is as open as the bait.
+    console_accepts=$(iptables -S DOCKER-USER 2>/dev/null \
+        | grep -- 'TRAPDOOR-scope' | grep -- "--dport ${CONSOLE_PORT:-8081}" \
+        | grep -- '-j ACCEPT' || true)
+    console_drops=$(iptables -S DOCKER-USER 2>/dev/null \
+        | grep -- 'TRAPDOOR-scope' | grep -- "--dport ${CONSOLE_PORT:-8081}" \
+        | grep -c -- '-j DROP' || true)
+
+    if [[ -z "$console_accepts" ]]; then
+        # A console with no rules is not a console with no problem: it means
+        # firewall.sh has not been applied since the port was added, so nothing
+        # is known about who can read it. Warning alone let an un-auditable
+        # console pass silently, which is the same shape as the bug this check
+        # exists to catch. Report NOT RUN and let the run fail.
+        warn "no console ACCEPT rules in DOCKER-USER (firewall.sh not applied since the console was added?)"
+        skip "console scope (no console rules on ${CONSOLE_PORT:-8081} to compare)"
+    elif [[ "${console_drops:-0}" -eq 0 ]]; then
+        warn "console has ACCEPT rules and no DROP: anything not matched falls through to the chain policy"
+    else
+        ok "console rules present on ${CONSOLE_PORT:-8081} (${console_drops} drop)"
+    fi
+
+    # The assertion that has teeth. The question is NOT "is the console scoped
+    # to the farm /16". That was the first version of this check and it was
+    # wrong twice over:
+    #
+    #   1. On this farm the /16 IS the network. Hard-coding it as a leak meant
+    #      the check failed the correct configuration and passed nothing.
+    #   2. Rewriting it to go green would have been the same lie in the other
+    #      direction: the check was telling on a real defect and I nearly
+    #      silenced it instead of reading it.
+    #
+    # The real defect it was pointing at: LAB_CIDR and ADMIN_CIDR were BOTH
+    # 192.168.0.0/16 on this host, so the console had no narrower scope than
+    # the bait. It accepts the whole farm. Every student machine can read every
+    # other student's source addresses, guessed passwords and typed commands.
+    #
+    # So the question is: is the console's ACCEPT scope wider than the operator
+    # network it is supposed to be limited to? Compare the actual prefix
+    # lengths rather than matching a literal string, so this works on any farm
+    # size instead of only the one I happened to be sitting in.
+    #
+    # Wider than the operator's own network means people the console is not for
+    # can read it. Fail, do not warn.
+    if [[ -n "$console_accepts" ]]; then
+        # Pull the source CIDR off each console ACCEPT and find the shortest
+        # prefix (the widest scope). Only farm-scale sources matter here; the
+        # docker bridge host rules (172.x/32) are single addresses and are
+        # needed for the port to work at all.
+        widest=""
+        widest_bits=999
+        while read -r src; do
+            [[ -z "$src" ]] && continue
+            bits="${src#*/}"
+            [[ "$bits" =~ ^[0-9]+$ ]] || continue
+            # Only consider sources in the operator's own address family/space
+            case "$src" in
+                192.168.*) ;;
+                10.*) ;;
+                172.1[6-9].*|172.2[0-9].*|172.3[01].*) ;;
+                *) ;;
+            esac
+            if [[ "$bits" -lt "$widest_bits" ]]; then
+                widest_bits="$bits"
+                widest="$src"
+            fi
+        done < <(printf '%s\n' "$console_accepts" \
+                 | sed -n 's/.*-s \([^ ]*\).*/\1/p')
+
+        if [[ -z "$widest" ]]; then
+            warn "could not read a source CIDR off the console ACCEPT rules; check skipped"
+            skip "console scope comparison (no parseable -s on the console accepts)"
+        elif [[ "$widest_bits" -le 16 ]]; then
+            echo "  FAIL console accepts ${widest}, which is as wide as the whole farm" >&2
+            echo "         every host on the network can read every student's source" >&2
+            echo "         addresses, guessed passwords and typed commands." >&2
+            echo "         Set ADMIN_CIDR to the operator network, not LAB_CIDR." >&2
+            FAIL=1
+        else
+            ok "console scope ${widest} is narrower than the farm (/${widest_bits})"
+        fi
+    fi
+fi
+
 echo
 if [[ "$FAIL" -eq 0 ]]; then
     echo "all checks passed."
     exit 0
 else
-    echo "SOME CHECKS FAILED — do not call this deployed."
+    # Name the reason. On 2026-11-12 this printed "SOME CHECKS FAILED" under a
+    # screen of green OK lines, because the only thing that failed was a NOT
+    # RUN. Correct verdict, useless sentence: a human reads the tail, sees no
+    # red, and learns to distrust the verdict instead of the check. The run is
+    # still failed, deliberately (Vera, 2026-11-01: green with a check skipped
+    # is the same lie as PASS on an exception), but it now says which one.
+    if [[ "${SKIPPED:-0}" -gt 0 ]]; then
+        echo "SOME CHECKS FAILED: ${SKIPPED} check(s) could not run (NOT RUN)."
+        echo "A skipped check is not a passed check. Do not call this deployed"
+        echo "until every NOT RUN above either runs or is ruled out by hand."
+    else
+        echo "SOME CHECKS FAILED: do not call this deployed."
+    fi
     exit 1
 fi

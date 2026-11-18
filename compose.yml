@@ -112,6 +112,43 @@ services:
     networks:
       - honeynet
 
+  # The human view. Six days of collecting events with the only door being
+  # `ssh` + `make sessions` is how this container came to exist.
+  #
+  # Two things about it are load-bearing:
+  #   - it is NOT on labnet, so it has no path back to the lab or the LAN even
+  #     though it publishes a port. Only `web` carries published ports onto
+  #     labnet today; the console joins honeynet, which is internal, and one
+  #     host-level publish. That keeps it reachable from the lab and nowhere
+  #     else, exactly like the decoy.
+  #   - it mounts the output read-only. A console that can write to the log is
+  #     a way to fake evidence, which is the one thing this repo is about.
+  console:
+    build:
+      context: ./console
+    container_name: trapdoor-console
+    hostname: ${SENSOR_HOSTNAME:-web01}
+    restart: unless-stopped
+    depends_on:
+      - shipper
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - ./out:/out:ro
+      - ./.verify:/verify:ro
+    ports:
+      - "${LAB_BIND_IP:-0.0.0.0}:${CONSOLE_PORT:-8081}:8081"
+    networks:
+      - labnet
+      - honeynet
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   shipper:
     <<: *honeypot
     build:
