@@ -36,6 +36,15 @@ __ENV_COWRIE_SSH_PORT="${COWRIE_SSH_PORT:-}"
 __ENV_COWRIE_TELNET_PORT="${COWRIE_TELNET_PORT:-}"
 __ENV_WEB_PORT="${WEB_PORT:-}"
 __ENV_CONSOLE_PORT="${CONSOLE_PORT:-}"
+# Found missing on 2026-11-18 by Jim on ops-verify-bench-49, after I pushed
+# a check-8 rewrite whose own tests pass only on a tree with no .env. The seven
+# above were snapshotted and this one was not, so on any real deployment (where
+# DEPLOY.md tells you to `cp .env.example .env`) the .env blanked a declaration
+# the caller had passed, and check 8 said "NO operator network is declared" even
+# though one was declared. A check that cannot pass, arriving through the
+# environment instead of through the prefix arithmetic this file spends twenty
+# lines warning about. If you add a variable to this file, add it here too.
+__ENV_CONSOLE_NETWORK_DECLARED="${CONSOLE_NETWORK_DECLARED:-}"
 
 [[ -f .env ]] && set -a && source .env && set +a
 
@@ -46,6 +55,7 @@ __ENV_CONSOLE_PORT="${CONSOLE_PORT:-}"
 [[ -n "$__ENV_COWRIE_TELNET_PORT" ]] && COWRIE_TELNET_PORT="$__ENV_COWRIE_TELNET_PORT"
 [[ -n "$__ENV_WEB_PORT" ]] && WEB_PORT="$__ENV_WEB_PORT"
 [[ -n "$__ENV_CONSOLE_PORT" ]] && CONSOLE_PORT="$__ENV_CONSOLE_PORT"
+[[ -n "$__ENV_CONSOLE_NETWORK_DECLARED" ]] && CONSOLE_NETWORK_DECLARED="$__ENV_CONSOLE_NETWORK_DECLARED"
 
 LAB_BIND_IP="${LAB_BIND_IP:-}"
 LAB_CIDR="${LAB_CIDR:-}"

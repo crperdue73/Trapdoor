@@ -184,6 +184,70 @@ else
 fi
 
 echo
+
+# A .env IS PRESENT, WHICH IS THE ONLY STATE A REAL DEPLOYMENT HAS.
+#
+# Added 2026-11-18. Every test above passes CONSOLE_NETWORK_DECLARED as an
+# environment variable and runs in a tree with NO .env. That is a state a real
+# deployment never has: DEPLOY.md Step 3 says `cp .env.example .env`, and .env
+# is gitignored, so a clone never contains one until the operator makes it.
+#
+# The gap that hid in there: verify.sh snapshots seven variables before
+# sourcing .env and restores them after (explicit env > .env > default), and
+# CONSOLE_NETWORK_DECLARED was not one of the seven. So a real .env blanked a
+# real declaration, and check 8 reported "NO operator network is declared"
+# even when it was declared. Six of ten tests failed, and NOT ONE of them was
+# visible to me, because my tree had no .env.
+#
+# Jim found it on ops-verify-bench-49 in round 1. This test is the reason it
+# cannot happen again: it runs the same cases with a .env present, so the
+# "tests pass on the developer's tree and fail on the operator's box" split
+# shows up here and not in somebody else's punch list.
+# $TMP already has the EXIT trap; keep this tree inside it so one trap cleans
+# both. (First attempt used its own mktemp -d and a second trap, which deleted
+# the copy before the test ran. The test failing was the test being wrong.)
+REPO_COPY="$TMP/repo"
+mkdir -p "$REPO_COPY/scripts" "$REPO_COPY/tests"
+cp -a scripts/verify.sh "$REPO_COPY/scripts/"
+cp -a schema "$REPO_COPY/" 2>/dev/null
+cp -a .env.example "$REPO_COPY/.env"
+# wide.txt has the trailing DROP that makes check 8 reach the assertion at all.
+
+run_check8_with_env() {
+    local fixture="$1" admin="$2" lab="$3" declared="${4-}"
+    IPTABLES_FIXTURE="$fixture" \
+    PATH="$TMP/bin:$PATH" \
+    ADMIN_CIDR="$admin" LAB_CIDR="$lab" CONSOLE_PORT=8081 \
+    CONSOLE_NETWORK_DECLARED="$declared" \
+        bash "$REPO_COPY/scripts/verify.sh" 2>&1
+}
+
+out=$(plain "$(run_check8_with_env "$TMP/wide.txt" "192.168.0.0/16" "192.168.0.0/16" "192.168.0.0/16|entire IT department, single network")")
+if grep -q "console scope 192.168.0.0/16 matches the declared operator network" <<<"$out" && ! grep -q "NO operator network is declared" <<<"$out"; then
+    ok "a declaration survives a .env being present (the 2026-11-18 Jim defect)"
+else
+    bad "a declared /16 was blanked by .env and reported undeclared"
+    printf '%s\n' "$out" | grep "console" | sed 's/^/       /'
+fi
+
+# And the reverse, so the fix cannot be "ignore .env entirely": with NO
+# declaration in the environment but one in .env, .env must still be honoured.
+cat > "$REPO_COPY/.env" <<'ENVEOF'
+LAB_BIND_IP=0.0.0.0
+LAB_CIDR=192.168.0.0/16
+CONSOLE_PORT=8081
+CONSOLE_NETWORK_DECLARED='192.168.0.0/16|entire IT department, single network'
+ENVEOF
+out=$(plain "$(IPTABLES_FIXTURE="$TMP/wide.txt" PATH="$TMP/bin:$PATH" bash "$REPO_COPY/scripts/verify.sh" 2>&1)")
+if grep -q "console scope 192.168.0.0/16 matches the declared operator network" <<<"$out"; then
+    ok ".env declaration is used when the environment passes none (precedence both ways)"
+else
+    bad "a declaration living only in .env was not honoured"
+    printf '%s\n' "$out" | grep "console" | sed 's/^/       /'
+fi
+
+
+
 if [[ $FAIL -eq 0 ]]; then
     echo "PASS  $PASS verify-check-8 tests"
     exit 0
