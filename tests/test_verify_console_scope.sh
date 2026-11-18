@@ -61,13 +61,40 @@ chmod +x "$TMP/bin/iptables"
 # skip, which is fine. We assert only on the console-scope lines.
 #
 # $4 = CONSOLE_NETWORK_DECLARED (may be empty, which is itself the test)
+#
+# THE HERMETIC PART, added 2026-11-18 after Jim's round 5, and it is the whole
+# point of this function:
+#
+# verify.sh sources .env when one is present. So before this fix, every test
+# below inherited the .env of whoever ran the suite. Test 3 passes an EMPTY
+# string to mean "no declaration" and asserts the check must FAIL, but verify.sh
+# reads it with ${VAR:-} and [[ -n ]], so empty and absent are the same thing and
+# a .env then supplied a declaration. The test was not measuring "undeclared",
+# it was measuring "undeclared unless the tester happens to have a .env".
+#
+# Consequence, measured on 5aeb482: on a correctly configured bench (the state
+# DEPLOY.md tells you to create) the suite went RED, 2 of 12. On a bench with no
+# .env it went green. A suite that rewards deleting your .env is worse than a
+# suite that fails.
+#
+# So: run in a temp cwd with an EMPTY .env, pass everything explicitly. The
+# cwd is a symlink farm that points at the real tree so scripts/ resolves, and
+# the .env there is ours, not the operator's.
 run_check8() {
     local fixture="$1" admin="$2" lab="$3" declared="${4-}"
-    IPTABLES_FIXTURE="$fixture" \
-    PATH="$TMP/bin:$PATH" \
-    ADMIN_CIDR="$admin" LAB_CIDR="$lab" CONSOLE_PORT=8081 \
-    CONSOLE_NETWORK_DECLARED="$declared" \
-        bash scripts/verify.sh 2>&1
+    local _cwd="$TMP/cwd"
+    rm -rf "$_cwd"
+    mkdir -p "$_cwd"
+    ln -s "$PWD/scripts" "$_cwd/scripts"
+    ln -s "$PWD/docs" "$_cwd/docs" 2>/dev/null
+    ln -s "$PWD/tests" "$_cwd/tests" 2>/dev/null
+    : > "$_cwd/.env"
+    ( cd "$_cwd" && \
+      IPTABLES_FIXTURE="$fixture" \
+      PATH="$TMP/bin:$PATH" \
+      ADMIN_CIDR="$admin" LAB_CIDR="$lab" CONSOLE_PORT=8081 \
+      CONSOLE_NETWORK_DECLARED="$declared" \
+          bash scripts/verify.sh 2>&1 )
 }
 
 plain() { printf '%s' "$1" | sed 's/\x1b\[[0-9;]*m//g'; }
