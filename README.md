@@ -224,20 +224,40 @@ make console        # run it straight from the tree, reading ./out
 ```
 
 **The console is not scoped like the decoy.** The decoy is supposed to be
-reachable, so it gets `LAB_CIDR`. The console is the opposite: it shows every
-attack every student threw, including their source addresses, the usernames
-and passwords they guessed, and the commands they typed. On the decoy's scope
-one student can sit and watch every other student. So the console gets its own
-`ADMIN_CIDR`, and `firewall.sh` refuses to run with `ADMIN_CIDR=0.0.0.0/0`
-rather than quietly publishing it to everyone who can route to the host.
+reachable, so it gets `LAB_CIDR`. The console shows every attack thrown at the
+lab, including source addresses, the usernames and passwords guessed, and the
+commands typed. That is a different asset with a different audience, so it gets
+its own `ADMIN_CIDR`, and `firewall.sh` refuses to run with`ADMIN_CIDR=0.0.0.0/0` rather than quietly publishing it to everyone who can
+route to the host. It also refuses a scope *narrower* than the host's own
+network, because on 2026-11-12 a `/24` on a `/16` farm meant the console
+answered the machine that tested it and refused the human it was built for.
+Narrow is not the virtue. Correct is.
 
-`verify.sh` check 8 asserts that boundary instead of counting ports, because a
-port count goes green whether the scope is right or wrong. This is worth
-saying out loud: the console was published on 8081 and left out of both the
-firewall script and the verification script for the first few hours of its
-life. The decoy's ports were covered and the new thing was not. That is the
-same bug this repo has found four times now, so it has a test that fails when
-the port disappears from the report again.
+**Correct has to be written down, because on this deployment there is nowhere
+narrower to go.** The lab runs on one network: the whole IT department is a
+single `/16` with no student VLAN. So `ADMIN_CIDR` *is* the `/16` here, and
+pretending otherwise would lock out most of the people the console exists for.
+That is a real limitation and it is stated rather than papered over: **anyone
+with a foothold anywhere on that network can read the console**, and therefore
+what students typed. There is no boundary to point at until there is a network
+to point at.
+
+What `verify.sh` check 8 asserts is not "is the scope narrow" (on a flat
+network the answer is no, forever) but the two things that can actually be
+wrong: **is the operator network declared in writing**, via
+`CONSOLE_NETWORK_DECLARED` in `.env`, naming who is on it and why it is that
+wide; and **has the console drifted wider than that declaration**. An
+undeclared scope is an unowned scope and fails the check. So does a console
+wider than what was declared. A declared `/16` passes, honestly. Narrower than
+declared is a warning, not a leak.
+
+A port count would have gone green here regardless, which is why the check
+asserts a boundary and not a number. And one more worth saying out loud: the
+console was published on 8081 and left out of both the firewall script and the
+verification script for the first few hours of its life. The decoy's ports were
+covered and the new thing was not. That regression is guarded by
+`tests/test_firewall_scope.sh`, which fails when the console's port disappears
+from `firewall.sh`'s report.
 
 Three things the page is careful about, each learned from a failure in this
 repo: a missing `out/events.jsonl` is stated as missing instead of drawn as

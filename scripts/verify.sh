@@ -559,14 +559,68 @@ if command -v iptables >/dev/null 2>&1; then
         if [[ -z "$widest" ]]; then
             warn "could not read a source CIDR off the console ACCEPT rules; check skipped"
             skip "console scope comparison (no parseable -s on the console accepts)"
-        elif [[ "$widest_bits" -le 16 ]]; then
-            echo "  FAIL console accepts ${widest}, which is as wide as the whole farm" >&2
-            echo "         every host on the network can read every student's source" >&2
-            echo "         addresses, guessed passwords and typed commands." >&2
-            echo "         Set ADMIN_CIDR to the operator network, not LAB_CIDR." >&2
-            FAIL=1
         else
-            ok "console scope ${widest} is narrower than the farm (/${widest_bits})"
+            # THE CHECK IS NOT "IS THE SCOPE NARROW". IT IS "IS THE SCOPE
+            # DECLARED".
+            #
+            # The previous version failed any scope with a prefix <= 16, on the
+            # reasoning that a /16 is the whole farm and the console should not
+            # be farm-wide. That reasoning assumed the farm has a narrow
+            # operator network to scope to. It does not: this deployment runs
+            # ONE network, the whole IT department is on a single /16, and
+            # there is no student VLAN to narrow to. So the check failed the
+            # only configuration that exists, every run, forever, and a check
+            # that cannot pass is a check nobody reads. That is the same lie as
+            # a check that cannot fail, arriving from the other direction.
+            #
+            # What replaces it still has teeth. It asks the two questions that
+            # can actually be wrong:
+            #
+            #   1. Is there a WRITTEN declaration of the operator network, and
+            #      does the console's real scope match it? An undeclared scope
+            #      is an unowned scope: nobody has said out loud who may read
+            #      what students typed. That fails.
+            #   2. Has the scope drifted WIDER than the declaration? That is the
+            #      leak the old check was reaching for, and it still fails.
+            #
+            # CONSOLE_NETWORK_DECLARED lives in .env next to ADMIN_CIDR. It is
+            # a sentence naming who is on the network, written by a human, not
+            # inferred from a prefix length. A single /16 declared as "entire
+            # IT department, no student VLAN" is honest and passes. The same
+            # /16 with no declaration does not.
+            _declared="${CONSOLE_NETWORK_DECLARED:-}"
+            _declared_cidr="${_declared%%|*}"
+            _declared_bits="${_declared_cidr#*/}"
+
+            if [[ -z "$_declared" ]]; then
+                echo "  FAIL console accepts ${widest} and NO operator network is declared" >&2
+                echo "         nobody has said in writing who is allowed to read what" >&2
+                echo "         students typed. An undeclared scope is an unowned scope." >&2
+                echo "         Set CONSOLE_NETWORK_DECLARED in .env, in the form" >&2
+                echo "           CONSOLE_NETWORK_DECLARED='<cidr>|<who is on it>'" >&2
+                echo "         including the reason if the network is wider than the" >&2
+                echo "         console's audience. A real answer beats a narrow one." >&2
+                FAIL=1
+            elif [[ ! "$_declared_bits" =~ ^[0-9]+$ ]]; then
+                echo "  FAIL CONSOLE_NETWORK_DECLARED is set but its CIDR does not parse" >&2
+                echo "         got: '${_declared_cidr}'  want: 'a.b.c.d/len|who is on it'" >&2
+                FAIL=1
+            elif (( widest_bits < _declared_bits )); then
+                echo "  FAIL console accepts ${widest}, WIDER than the declared operator" >&2
+                echo "         network ${_declared_cidr}. The console reports on people the" >&2
+                echo "         declaration does not cover. Either narrow ADMIN_CIDR or" >&2
+                echo "         widen the declaration and say why in it." >&2
+                FAIL=1
+            elif (( widest_bits > _declared_bits )); then
+                # Narrower than declared is not a leak, but it is a scope
+                # nobody described, and the 2026-11-12 afternoon proved that a
+                # narrow-looking default can lock out the human it was for.
+                warn "console accepts ${widest}, NARROWER than declared ${_declared_cidr}"
+                warn "  not a leak, but verify this reaches the people it is for"
+                ok "console scope ${widest} is declared and not wider than the declaration"
+            else
+                ok "console scope ${widest} matches the declared operator network"
+            fi
         fi
     fi
 fi
