@@ -30,8 +30,13 @@ startup:     onboot
 
 ```bash
 apt update && apt upgrade -y
-apt install -y curl git ca-certificates jq net-tools tcpdump
+apt install -y curl git ca-certificates jq net-tools tcpdump make
 ```
+
+`make` is not decoration: every command in Steps 4 and 5 is a make target, so
+without it the next thing you type fails with `make: command not found` and you
+have installed nothing. Jim hit exactly this on 2026-11-18 and could not run a
+single documented command until he installed it by hand.
 
 `tcpdump` and `jq` are not optional for a lab box. Students will want to watch
 the wire and read normalized events.
@@ -58,12 +63,52 @@ Edit `.env`:
 SENSOR_HOSTNAME=web01
 SENSOR_NAME=lab-sensor-01
 LAB_BIND_IP=192.168.111.45
-LAB_CIDR=192.168.0.0/16
+LAB_CIDR=192.168.0.0/16   # THIS FARM. A different lab uses its own range:
+                          # .env.example ships 10.20.30.0/24 as a placeholder.
+                          # Whatever you put here must be the network your
+                          # students' traffic actually comes from.
 COWRIE_SSH_PORT=2222
 COWRIE_TELNET_PORT=2223
 WEB_PORT=8080
 RETENTION_DAYS=14
 ```
+
+### The console, and the one line you must write yourself
+
+The console is a read-only human view on port 8081: who is attacking, what they
+typed, what they tried. It is on its own port because it is the one thing in
+this stack that shows you real student keystrokes, and that is the one thing
+that must not be readable by the people being taught.
+
+Two variables, and they are different questions:
+
+```bash
+CONSOLE_PORT=8081
+
+# Who may READ the console. Deliberately not the same as LAB_CIDR: the decoy is
+# meant to be reachable by the lab, the console is not.
+ADMIN_CIDR=192.168.111.0/24
+
+# Who is on that network, in writing, for a human to read.
+# QUOTE THE VALUE. verify.sh loads this file with `source`, so an unquoted `|`
+# is a shell pipe and will eat the value.
+CONSOLE_NETWORK_DECLARED='192.168.111.0/24|the two instructors, no students'
+```
+
+`verify.sh` check 8 refuses to pass while `CONSOLE_NETWORK_DECLARED` is empty.
+That is not a formality. On a single-network farm the check cannot ask "is this
+narrow enough", because there is nowhere narrower to go. It can ask whether a
+human has written down who is allowed to read what students typed, and whether
+the console agrees with that sentence. An undeclared scope is an unowned scope.
+
+Two things worth knowing before you set them:
+
+- `ADMIN_CIDR` narrower than this host's own network is refused by
+  `firewall.sh`, by design. On a /24 box, a /24 is correct.
+- The console binds to `LAB_BIND_IP` like everything else here. If
+  `LAB_BIND_IP` is `0.0.0.0` the console answers on every interface, and the
+  `ADMIN_CIDR` firewall rule is then the only thing between a student and the
+  keystroke log. Set `LAB_BIND_IP` to the lab-facing address.
 
 ## Step 4 — bring it up
 
