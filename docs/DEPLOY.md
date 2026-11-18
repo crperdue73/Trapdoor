@@ -75,6 +75,10 @@ RETENTION_DAYS=14
 # The console. 8081 is the default; it is listed here so the Step 3 block and
 # the console subsection below do not disagree about what exists.
 CONSOLE_PORT=8081
+
+# WHO MAY READ THE CONSOLE. NOT optional, and not the same as LAB_CIDR.
+# Leave this out and Step 4's own command refuses to run.
+ADMIN_CIDR=192.168.111.0/24
 ```
 
 ### The console, and the one line you must write yourself
@@ -109,6 +113,14 @@ Two things worth knowing before you set them:
 
 - `ADMIN_CIDR` narrower than this host's own network is refused by
   `firewall.sh`, by design. On a /24 box, a /24 is correct.
+- `ADMIN_CIDR` **unset** is refused too, and that is the one people hit. It
+  says `REFUSING: cannot determine the console host's own subnet`. The script
+  can derive a scope from `LAB_BIND_IP`, but only when that address is actually
+  on the box, so a `.env` copied from the example and edited in the wrong place
+  lands here. Setting it is not optional and it is not a formality. (Jim filed
+  this on 2026-11-18: the test suite is green on that state, because the tests
+  measure whether the script tells the truth, not whether a stranger can run
+  it. Those are two different questions and only one of them was automated.)
 - The console binds to `LAB_BIND_IP` like everything else here. If
   `LAB_BIND_IP` is `0.0.0.0` the console answers on every interface, and the
   `ADMIN_CIDR` firewall rule is then the only thing between a student and the
@@ -147,7 +159,8 @@ Two things worth knowing about that firewall line:
   silently asks for sudo is a surprise nobody wants at 2am.
 - With `ADMIN_CIDR` unset it scopes the console to this host's own subnet as the
   host defines it, which on a flat farm is the whole farm. Set `ADMIN_CIDR` in
-  Step 3 if that is not what you want.
+  Step 3 if that is not what you want. If the derivation cannot resolve at all
+  it refuses instead of scoping to nothing.
 
 Do not reach for `LAB_BIND_IP=127.0.0.1` as a shortcut here. It binds the
 console, but it also binds the decoy, so students cannot reach the thing they

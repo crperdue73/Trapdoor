@@ -200,6 +200,74 @@ else
     fi
 fi
 
+# ---------------------------------------------------------------------------
+# THE STRANGER PATH: can a person who follows DEPLOY.md actually run it?
+#
+# Jim, 2026-11-18, round 4. Every test above was green on a state where the
+# documented path FAILS. He put it exactly right: the tests above measure
+# whether the script tells the truth; this one measures whether a stranger can
+# get through Step 3 to Step 4. Those are different questions, and before this
+# test only the first was automated. "The shipped default refuses" and "the
+# shipped default is fine" produced identical output.
+#
+# So this reads DEPLOY.md the way a stranger does: take the env block in Step 3,
+# apply it to a copy of .env.example, and then run the Step 4 command. If the
+# doc's own block does not carry the variables the doc's own command needs, the
+# doc is broken and no amount of green above says otherwise.
+#
+# This test fails if DEPLOY.md stops setting a variable that firewall.sh
+# requires. It does not care what the value is beyond being usable.
+# ---------------------------------------------------------------------------
+echo
+
+_DEPLOY=docs/DEPLOY.md
+if [[ ! -f "$_DEPLOY" ]]; then
+    echo "  SKIP stranger-path (no $_DEPLOY)"
+else
+    # Why -n and a separate comment test: the first version of this loop used
+    # `grep -qE "^${_var}="`, which happily matched a COMMENTED-OUT line. I
+    # reverted the doc fix to prove the test bites and it still passed, which
+    # makes it the exact thing it was written to catch. A copyable line is one
+    # that is not a comment, so strip comments first and only then look. Jim's
+    # own words for this shape: a check that cannot fail is theater.
+    # And `grep -v ... | grep -q` is a THIRD bug in this one loop, found the
+    # same way: -q exits on first match, the upstream grep -v gets SIGPIPE, and
+    # `set -o pipefail` reports 141 as a failure. So a variable that WAS present
+    # read as missing, and the test was wrong in both directions at once
+    # (passing on commented lines, failing on real ones). Read the file once,
+    # strip comments in the shell, and match with a case statement. No pipe, so
+    # no pipefail interaction and no SIGPIPE.
+    # Scope to the env block a stranger actually copies. The console
+    # subsection further down also shows ADMIN_CIDR=, so a whole-file search
+    # passes even when the copyable Step 3 block omits it. Found by reverting
+    # the fix and watching the test stay green: it was reading a different line.
+    # Only the block a stranger COPIES: the one right after 'Edit .env:'.
+    # Searching every code block is still too loose, because the console
+    # subsection owns a second fenced block that also sets ADMIN_CIDR, and a
+    # test that accepts either one passes on a doc where the copyable block is
+    # incomplete. Two looser versions of this both stayed green on a reverted
+    # fix. This one is pinned to the block a reader actually pastes.
+    _DEPLOY_COPYABLE=$(awk '
+        /^Edit `\.env`:/ { want=1; next }
+        want && /^```bash/ { inblock=1; next }
+        inblock && /^```/   { exit }
+        inblock && $0 !~ /^[[:space:]]*#/ { print }
+    ' "$_DEPLOY")
+    for _var in ADMIN_CIDR LAB_BIND_IP LAB_CIDR; do
+        _hit=0
+        while IFS= read -r _line; do
+            case "$_line" in
+                "${_var}="*) _hit=1; break ;;
+            esac
+        done <<< "$_DEPLOY_COPYABLE"
+        if [[ $_hit -eq 1 ]]; then
+            ok "Step 3 block sets ${_var}, so copying the doc cannot omit it"
+        else
+            bad "DEPLOY.md never shows ${_var}= in a copyable line; the Step 4 command can refuse because of a line the doc left out"
+        fi
+    done
+fi
+
 echo
 if [[ $FAIL -eq 0 ]]; then
     echo "PASS  $PASS console-scope tests"
